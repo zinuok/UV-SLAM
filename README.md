@@ -1,14 +1,14 @@
 # UV-SLAM
 
 ## Developing !!
-Jinwoo Jeon: developing to estimate the uncertainty of point & line feauture from UV-SLAM
+Jinwoo Jeon: for Struct-MDC
 
 
 
 
 <center>
 
-| UV-SLAM  | w/ uncertainty |
+| UV-SLAM  ||
 | :---: | :---: |
 | <img src="https://user-images.githubusercontent.com/42729711/143393647-ec49dab0-b2e0-4c77-831a-03a819125a7f.png">  | <img src="/uploads/131796cc3533ddc8d916ee57e7373944/point_uncertainty.png">
 
