@@ -578,7 +578,7 @@ void process()
             }
 
             TicToc t_r;
-            Mat latest_img, latest_depth;
+            Mat latest_img_, latest_depth_;
 
 
 //            cout << "I: " << get<2>(measurement)->header.stamp << endl;
@@ -587,17 +587,17 @@ void process()
 //            cout << "\n" << endl;
 
             cv_bridge::CvImagePtr ptr = cv_bridge::toCvCopy(get<2>(measurement), sensor_msgs::image_encodings::BGR8);
-            latest_img = ptr->image.clone();
+            latest_img_ = ptr->image.clone();
 
             if (ENABLE_DEPTH)
             {
                 cv_bridge::CvImagePtr ptr2 = cv_bridge::toCvCopy(get<3>(measurement), sensor_msgs::image_encodings::MONO16);
-                latest_depth = ptr2->image.clone();
-                estimator.processImage(image, image_line, img_msg->header, latest_img, latest_depth);
+                latest_depth_ = ptr2->image.clone();
+                estimator.processImage(image, image_line, img_msg->header, latest_img_, latest_depth_);
             }
             else
             {
-                estimator.processImage(image, image_line, img_msg->header, latest_img, latest_depth);
+                estimator.processImage(image, image_line, img_msg->header, latest_img_, latest_depth_);
             }
 
             double t_processImage = t_r.toc();

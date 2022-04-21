@@ -679,7 +679,21 @@ void Estimator::solveOdometry(double header_t)
         Mat features_point = Mat::zeros(depth.size(), CV_16UC1);
         Mat validity_point = Mat::zeros(depth.size(), CV_8UC1);
 
-//        cvtColor(img, img, CV_GRAY2BGR);
+        // int inttype = latest_depth.type();
+        // string r;
+        // unsigned char depth_type = inttype & CV_MAT_DEPTH_MASK;
+        // switch ( depth_type ) {
+        //     case CV_8U:  r = "8U"; break;
+        //     case CV_8S:  r = "8S"; break;
+        //     case CV_16UC1: r = "16U"; break;
+        //     case CV_16S: r = "16S"; break;
+        //     case CV_32S: r = "32S"; break;
+        //     case CV_32F: r = "32F"; break;
+        //     case CV_64F: r = "64F"; break;
+        //     default:     r = "User"; break;
+        // }
+        // cout << "depth type: " << r << endl;
+
 
         int cnt = 0;
         for(auto &it_per_id : f_manager.feature)
@@ -912,13 +926,17 @@ void Estimator::solveOdometry(double header_t)
 //            imwrite(IMG_RESULT_PATH_POINT+"/"+to_string(header_t)+".png", img);
 
             // 2-1) GT depth image
-            imwrite(GT_RESULT_PATH+"/"+to_string(header_t)+".png", depth * DEPTH_SCALE / 1000);
+            Mat depth_save = Mat::zeros(depth.size(), CV_16UC1);
+            depth_save = depth * DEPTH_SCALE / 1000;
+            imwrite(GT_RESULT_PATH+"/"+to_string(header_t)+".png", depth_save);
 //            GT_RESULT_PATH_POINT.replace(GT_RESULT_PATH_POINT.find(from), from.length(), to);
 //            imwrite(GT_RESULT_PATH_POINT+"/"+to_string(header_t)+".png", depth * DEPTH_SCALE / 1000);
 
 
             // 2-2) GT depth visualize
-            imwrite(GT_VISUALZE_PATH+"/"+to_string(header_t)+".png", depth * DEPTH_SCALE); // store in [mm] unit just for visualization purpose
+            Mat depth_vis_save = Mat::zeros(depth_vis.size(), CV_16UC1);
+            depth_vis_save = depth * DEPTH_SCALE;
+            imwrite(GT_VISUALZE_PATH+"/"+to_string(header_t)+".png", depth_vis_save); // store in [mm] unit just for visualization purpose
 //            GT_VISUALZE_PATH_POINT.replace(GT_VISUALZE_PATH_POINT.find(from), from.length(), to);
 //            imwrite(GT_VISUALZE_PATH_POINT+"/"+to_string(header_t)+".png", depth * DEPTH_SCALE);
 
