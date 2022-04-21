@@ -1,6 +1,10 @@
 #include "parameters.h"
 
+int POINT_ONLY;
+int ENABLE_DEPTH;
+
 std::string IMAGE_TOPIC;
+std::string DEPTH_TOPIC;
 std::string IMU_TOPIC;
 std::vector<std::string> CAM_NAMES;
 std::string FISHEYE_MASK;
@@ -61,7 +65,13 @@ void readParameters(ros::NodeHandle &n)
 
     CANNY_DETECT = fsSettings["canny_detect"];
 
+
+    POINT_ONLY   = fsSettings["point_only"];
+    ENABLE_DEPTH = fsSettings["enable_depth"];
+
+
     fsSettings["image_topic"] >> IMAGE_TOPIC;
+    fsSettings["depth_topic"] >> DEPTH_TOPIC;
     fsSettings["imu_topic"] >> IMU_TOPIC;
     MAX_CNT = fsSettings["max_cnt"];
     MIN_DIST = fsSettings["min_dist"];

@@ -24,6 +24,7 @@ using namespace cv;
 using namespace line_descriptor;
 
 
+#include "utility/tic_toc.h"
 #include "parameters.h"
 
 class LineFeaturePerFrame

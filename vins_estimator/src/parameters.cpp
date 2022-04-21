@@ -1,10 +1,17 @@
 #include "parameters.h"
 
+int POINT_ONLY;
+int ENABLE_DEPTH;
+
 double INIT_DEPTH;
 double MIN_PARALLAX;
 double ACC_N, ACC_W;
 double GYR_N, GYR_W;
 double FOCAL_LENGTH;
+double PROJ_FX;
+double PROJ_FY;
+double PROJ_CX;
+double PROJ_CY;
 
 std::vector<Eigen::Matrix3d> RIC;
 std::vector<Eigen::Vector3d> TIC;
@@ -18,9 +25,17 @@ int NUM_ITERATIONS;
 int ESTIMATE_EXTRINSIC;
 int ESTIMATE_TD;
 int ROLLING_SHUTTER;
+
+std::string IMG_RESULT_PATH;
+std::string GT_RESULT_PATH;
+std::string GT_VISUALZE_PATH;
+std::string VALIDITY_RESULT_PATH;
+std::string POSE_RESULT_PATH;
+std::string FEATURE_RESULT_PATH;
+std::string MESH_RESULT_PATH;
+
 std::string EX_CALIB_RESULT_PATH;
 std::string VINS_RESULT_PATH;
-std::string GT_RESULT_PATH;
 std::string IMU_TOPIC;
 double ROW, COL;
 double TD, TR;
@@ -58,12 +73,35 @@ void readParameters(ros::NodeHandle &n)
 
     cv::FileNode PROJ = fsSettings["projection_parameters"];
     FOCAL_LENGTH = PROJ["fx"];
+    PROJ_FX = PROJ["fx"];
+    PROJ_FY = PROJ["fy"];
+    PROJ_CX = PROJ["cx"];
+    PROJ_CY = PROJ["cy"];
     fsSettings["imu_topic"] >> IMU_TOPIC;
+
 
     SOLVER_TIME = fsSettings["max_solver_time"];
     NUM_ITERATIONS = fsSettings["max_num_iterations"];
     MIN_PARALLAX = fsSettings["keyframe_parallax"];
     MIN_PARALLAX = MIN_PARALLAX / FOCAL_LENGTH;
+
+
+    POINT_ONLY = fsSettings["point_only"];
+    ENABLE_DEPTH = fsSettings["enable_depth"];
+
+
+
+
+
+    std::string SEQ_PATH;
+    fsSettings["seq_path"] >> SEQ_PATH;
+    IMG_RESULT_PATH = SEQ_PATH + "/image";
+    GT_RESULT_PATH = SEQ_PATH + "/ground_truth";
+    GT_VISUALZE_PATH = SEQ_PATH + "/visualize";
+    FEATURE_RESULT_PATH = SEQ_PATH + "/sparse_depth";
+    POSE_RESULT_PATH = SEQ_PATH + "/pose";
+    VALIDITY_RESULT_PATH = SEQ_PATH + "/validity_map";
+    MESH_RESULT_PATH = SEQ_PATH + "/mesh_uv";
 
     std::string OUTPUT_PATH;
     fsSettings["output_path"] >> OUTPUT_PATH;

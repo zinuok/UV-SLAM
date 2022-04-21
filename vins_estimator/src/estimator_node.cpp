@@ -7,6 +7,7 @@
 #include <ros/ros.h>
 #include <cv_bridge/cv_bridge.h>
 #include <opencv2/opencv.hpp>
+#include <tuple>
 
 #include "estimator.h"
 #include "parameters.h"
@@ -25,6 +26,8 @@ double current_time = -1;
 queue<sensor_msgs::ImuConstPtr> imu_buf;
 queue<sensor_msgs::PointCloudConstPtr> feature_buf;
 queue<sensor_msgs::PointCloudConstPtr> relo_buf;
+queue<sensor_msgs::ImageConstPtr> img_buf;
+queue<sensor_msgs::ImageConstPtr> depth_buf;
 int sum_of_wait = 0;
 
 std::mutex m_buf;
@@ -41,6 +44,8 @@ Eigen::Vector3d tmp_Bg;
 Eigen::Vector3d acc_0;
 Eigen::Vector3d gyr_0;
 bool init_feature = 0;
+bool init_img = 0;
+bool init_depth = 0;
 bool init_imu = 1;
 double last_imu_t = 0;
 
@@ -217,15 +222,15 @@ void update()
 
 }
 
-//TODO
-std::vector<std::pair<std::vector<sensor_msgs::ImuConstPtr>, sensor_msgs::PointCloudConstPtr>>
+// with depth
+std::vector<std::tuple<std::vector<sensor_msgs::ImuConstPtr>, sensor_msgs::PointCloudConstPtr, sensor_msgs::ImageConstPtr, sensor_msgs::ImageConstPtr>>
 getMeasurements()
 {
-    std::vector<std::pair<std::vector<sensor_msgs::ImuConstPtr>, sensor_msgs::PointCloudConstPtr>> measurements;
+    std::vector<std::tuple<std::vector<sensor_msgs::ImuConstPtr>, sensor_msgs::PointCloudConstPtr, sensor_msgs::ImageConstPtr, sensor_msgs::ImageConstPtr>> measurements;
 
     while (true)
     {
-        if (imu_buf.empty() || feature_buf.empty())
+        if (imu_buf.empty() || feature_buf.empty() || img_buf.empty() || depth_buf.empty())
             return measurements;
 
         if (!(imu_buf.back()->header.stamp.toSec() > feature_buf.front()->header.stamp.toSec() + estimator.td))
@@ -239,10 +244,17 @@ getMeasurements()
         {
             ROS_WARN("throw img, only should happen at the beginning");
             feature_buf.pop();
+            img_buf.pop();
+            depth_buf.pop();
             continue;
         }
+
         sensor_msgs::PointCloudConstPtr img_msg = feature_buf.front();
         feature_buf.pop();
+        sensor_msgs::ImageConstPtr latestImg_msg = img_buf.front();
+        img_buf.pop();
+        sensor_msgs::ImageConstPtr latestDepth_msg = depth_buf.front();
+        depth_buf.pop();
 
         std::vector<sensor_msgs::ImuConstPtr> IMUs;
         while (imu_buf.front()->header.stamp.toSec() < img_msg->header.stamp.toSec() + estimator.td)
@@ -253,10 +265,59 @@ getMeasurements()
         IMUs.emplace_back(imu_buf.front());
         if (IMUs.empty())
             ROS_WARN("no imu between two image");
-        measurements.emplace_back(IMUs, img_msg);
+        measurements.emplace_back(make_tuple(IMUs, img_msg, latestImg_msg, latestDepth_msg));
     }
     return measurements;
 }
+
+
+// without depth
+std::vector<std::tuple<std::vector<sensor_msgs::ImuConstPtr>, sensor_msgs::PointCloudConstPtr, sensor_msgs::ImageConstPtr, sensor_msgs::ImageConstPtr>>
+getMeasurements(bool without_depth)
+{
+    std::vector<std::tuple<std::vector<sensor_msgs::ImuConstPtr>, sensor_msgs::PointCloudConstPtr, sensor_msgs::ImageConstPtr, sensor_msgs::ImageConstPtr>> measurements;
+
+    while (true)
+    {
+        if (imu_buf.empty() || feature_buf.empty() || img_buf.empty())
+            return measurements;
+
+        if (!(imu_buf.back()->header.stamp.toSec() > feature_buf.front()->header.stamp.toSec() + estimator.td))
+        {
+            //ROS_WARN("wait for imu, only should happen at the beginning");
+            sum_of_wait++;
+            return measurements;
+        }
+
+        if (!(imu_buf.front()->header.stamp.toSec() < feature_buf.front()->header.stamp.toSec() + estimator.td))
+        {
+            ROS_WARN("throw img, only should happen at the beginning");
+            feature_buf.pop();
+            img_buf.pop();
+            continue;
+        }
+
+        sensor_msgs::PointCloudConstPtr img_msg = feature_buf.front();
+        feature_buf.pop();
+        sensor_msgs::ImageConstPtr latestImg_msg = img_buf.front();
+        img_buf.pop();
+        sensor_msgs::ImageConstPtr latestDepth_msg;
+
+        std::vector<sensor_msgs::ImuConstPtr> IMUs;
+        while (imu_buf.front()->header.stamp.toSec() < img_msg->header.stamp.toSec() + estimator.td)
+        {
+            IMUs.emplace_back(imu_buf.front());
+            imu_buf.pop();
+        }
+        IMUs.emplace_back(imu_buf.front());
+        if (IMUs.empty())
+            ROS_WARN("no imu between two image");
+        measurements.emplace_back(make_tuple(IMUs, img_msg, latestImg_msg, latestDepth_msg));
+    }
+    return measurements;
+}
+
+
 
 void imu_callback(const sensor_msgs::ImuConstPtr &imu_msg)
 {
@@ -328,11 +389,31 @@ void relocalization_callback(const sensor_msgs::PointCloudConstPtr &points_msg)
     m_buf.unlock();
 }
 
+void latest_depth_callback(const sensor_msgs::ImagePtr &depth_msg)
+{
+    assert(ENABLE_DEPTH);
+    if (!init_depth)
+    {
+        //skip the first detected feature, which doesn't contain optical flow speed
+        init_depth = 1;
+        return;
+    }
+    m_buf.lock();
+    depth_buf.push(depth_msg);
+    m_buf.unlock();
+}
+
 void latest_callback(const sensor_msgs::ImagePtr &img_msg)
 {
+    if (!init_img)
+    {
+        //skip the first detected feature, which doesn't contain optical flow speed
+        init_img = 1;
+        return;
+    }
     m_buf.lock();
-    cv_bridge::CvImagePtr ptr = cv_bridge::toCvCopy(img_msg, sensor_msgs::image_encodings::MONO8);
-    estimator.latest_img = ptr->image;
+    cv_bridge::CvImagePtr ptr = cv_bridge::toCvCopy(img_msg, sensor_msgs::image_encodings::BGR8);
+    img_buf.push(img_msg);
     m_buf.unlock();
 }
 
@@ -342,19 +423,32 @@ void process()
     while (true)
     {
         TicToc t_process;
-        std::vector<std::pair<std::vector<sensor_msgs::ImuConstPtr>, sensor_msgs::PointCloudConstPtr>> measurements;
+        std::vector<std::tuple<std::vector<sensor_msgs::ImuConstPtr>, sensor_msgs::PointCloudConstPtr, sensor_msgs::ImageConstPtr, sensor_msgs::ImageConstPtr>> measurements;
         std::unique_lock<std::mutex> lk(m_buf);
-        con.wait(lk, [&]
-                 {
-            return (measurements = getMeasurements()).size() != 0;
-                 });
-        lk.unlock();
+        if (ENABLE_DEPTH)
+        {
+            con.wait(lk, [&]
+                     {
+                return (measurements = getMeasurements()).size() != 0;
+                     });
+            lk.unlock();
+        }
+        else
+        {
+            con.wait(lk, [&]
+                     {
+                return (measurements = getMeasurements(true)).size() != 0;
+                     });
+            lk.unlock();
+        }
+
+
         m_estimator.lock();
         for (auto &measurement : measurements)
         {
-            auto img_msg = measurement.second;
+            auto img_msg = get<1>(measurement);
             double dx = 0, dy = 0, dz = 0, rx = 0, ry = 0, rz = 0;
-            for (auto &imu_msg : measurement.first)
+            for (auto &imu_msg : get<0>(measurement))
             {
                 double t = imu_msg->header.stamp.toSec();
                 double img_t = img_msg->header.stamp.toSec() + estimator.td;
@@ -454,33 +548,58 @@ void process()
 
             // lines
             map<int, vector<Eigen::Matrix<double, 15, 1>>> image_line;  //14 not sure
-            for (unsigned int i = 0; i < img_msg->channels[5].values.size(); i++)
+            if (!POINT_ONLY)
             {
-                int line_id = img_msg->channels[5].values[i] + 0.5;;
-                double start_x = img_msg->channels[6].values[i];
-                double start_y = img_msg->channels[7].values[i];
-                double end_x = img_msg->channels[8].values[i];
-                double end_y = img_msg->channels[9].values[i];
-                double start_u = img_msg->channels[10].values[i];
-                double start_v = img_msg->channels[11].values[i];
-                double end_u = img_msg->channels[12].values[i];
-                double end_v = img_msg->channels[13].values[i];
-                double start_velocity_x = img_msg->channels[14].values[i];
-                double start_velocity_y = img_msg->channels[15].values[i];
-                double end_velocity_x = img_msg->channels[16].values[i];
-                double end_velocity_y = img_msg->channels[17].values[i];
-                double vp_x = img_msg->channels[18].values[i];
-                double vp_y = img_msg->channels[19].values[i];
-                double vp_z = img_msg->channels[20].values[i];
+                for (unsigned int i = 0; i < img_msg->channels[5].values.size(); i++)
+                {
+                    int line_id = img_msg->channels[5].values[i] + 0.5;;
+                    double start_x = img_msg->channels[6].values[i];
+                    double start_y = img_msg->channels[7].values[i];
+                    double end_x = img_msg->channels[8].values[i];
+                    double end_y = img_msg->channels[9].values[i];
+                    double start_u = img_msg->channels[10].values[i];
+                    double start_v = img_msg->channels[11].values[i];
+                    double end_u = img_msg->channels[12].values[i];
+                    double end_v = img_msg->channels[13].values[i];
+                    double start_velocity_x = img_msg->channels[14].values[i];
+                    double start_velocity_y = img_msg->channels[15].values[i];
+                    double end_velocity_x = img_msg->channels[16].values[i];
+                    double end_velocity_y = img_msg->channels[17].values[i];
+                    double vp_x = img_msg->channels[18].values[i];
+                    double vp_y = img_msg->channels[19].values[i];
+                    double vp_z = img_msg->channels[20].values[i];
 
-                //ROS_ASSERT(z == 1);
-                Eigen::Matrix<double, 15, 1> line_uv_velocity;
-                line_uv_velocity << start_x, start_y, end_x, end_y, start_u, start_v, end_u, end_v, \
-                start_velocity_x, start_velocity_y, end_velocity_x, end_velocity_y, vp_x, vp_y, vp_z;
-                image_line[line_id].emplace_back(line_uv_velocity);
+                    //ROS_ASSERT(z == 1);
+                    Eigen::Matrix<double, 15, 1> line_uv_velocity;
+                    line_uv_velocity << start_x, start_y, end_x, end_y, start_u, start_v, end_u, end_v, \
+                    start_velocity_x, start_velocity_y, end_velocity_x, end_velocity_y, vp_x, vp_y, vp_z;
+                    image_line[line_id].emplace_back(line_uv_velocity);
+                }
             }
+
             TicToc t_r;
-            estimator.processImage(image, image_line, img_msg->header);
+            Mat latest_img, latest_depth;
+
+
+//            cout << "I: " << get<2>(measurement)->header.stamp << endl;
+//            cout << "D: " << get<3>(measurement)->header.stamp << endl;
+//            cout << "td: " << abs(get<2>(measurement)->header.stamp.toSec() - get<3>(measurement)->header.stamp.toSec()) << endl;
+//            cout << "\n" << endl;
+
+            cv_bridge::CvImagePtr ptr = cv_bridge::toCvCopy(get<2>(measurement), sensor_msgs::image_encodings::BGR8);
+            latest_img = ptr->image.clone();
+
+            if (ENABLE_DEPTH)
+            {
+                cv_bridge::CvImagePtr ptr2 = cv_bridge::toCvCopy(get<3>(measurement), sensor_msgs::image_encodings::MONO16);
+                latest_depth = ptr2->image.clone();
+                estimator.processImage(image, image_line, img_msg->header, latest_img, latest_depth);
+            }
+            else
+            {
+                estimator.processImage(image, image_line, img_msg->header, latest_img, latest_depth);
+            }
+
             double t_processImage = t_r.toc();
 
             double whole_t = t_s.toc();
@@ -534,7 +653,9 @@ int main(int argc, char **argv)
     ros::Subscriber sub_image = n.subscribe("/feature_tracker/feature", 2000, feature_callback);
     ros::Subscriber sub_restart = n.subscribe("/feature_tracker/restart", 2000, restart_callback);
     ros::Subscriber sub_relo_points = n.subscribe("/pose_graph/match_points", 2000, relocalization_callback);
+
     ros::Subscriber sub_latest_img = n.subscribe("/feature_tracker/latest_img", 2000, latest_callback);
+    ros::Subscriber sub_latest_depth = n.subscribe("/feature_tracker/latest_depth", 2000, latest_depth_callback);
 
 
 //    message_filters::Subscriber<nav_msgs::Path> GT_path(n, "/vins_estimator/GT_path", 1000);

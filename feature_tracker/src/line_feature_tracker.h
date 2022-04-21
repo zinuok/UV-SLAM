@@ -26,7 +26,6 @@
 #include "math.h"
 #include "utility.h"
 #include "highgui.h"
-#include "ELSED.h"
 
 using namespace std;
 using namespace camodocal;
@@ -42,7 +41,8 @@ class LineFeatureTracker
   public:
     LineFeatureTracker();
 
-    void readImage4Line(const Mat &_img, double _cur_time);
+    void readImage4Line(const Mat &_img, const Mat &_img_color, const Mat &_depth, double _cur_time);
+    void readImage4Line(const Mat &_img, const Mat &_img_color, double _cur_time);
     void imageUndistortion(Mat &_img, Mat &_out_undistort_img);
     void readIntrinsicParameter(const string &calib_file);
     void lineExtraction( Mat &cur_img, vector<LineKL> &_keyLine, Mat &_descriptor );
@@ -69,6 +69,9 @@ class LineFeatureTracker
     Mat new_camera_matrix, undist_map1, undist_map2;
 
     Mat prev_img, curr_img, forw_img;
+    Mat prev_img_color, curr_img_color, forw_img_color;
+    double prev_t, curr_t, forw_t;
+    Mat prev_depth, curr_depth, forw_depth;
     Mat curr_descriptor, m_matched_descriptor;
 
     vector<Point2f> curr_start_pts, curr_end_pts;
@@ -98,7 +101,7 @@ class LineFeatureTracker
     CvMat* measurement = cvCreateMat(2, 1, CV_32FC1);
 
     // dynamic params (4), measurement params (2), control params (0)
-//    CvKalman* kalman  = cvCreateKalman(4, 2, 0);
+    CvKalman* kalman  = cvCreateKalman(4, 2, 0);
 
     void CannyDetection(Mat &src, vector<line_descriptor::KeyLine> &keylines);
     bool getPointChain( const Mat & img, const Point2f pt, Point2f * chained_pt, int & direction, int step );

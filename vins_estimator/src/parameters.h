@@ -8,7 +8,14 @@
 #include <opencv2/core/eigen.hpp>
 #include <fstream>
 
+extern int POINT_ONLY;
+extern int ENABLE_DEPTH;
+
 extern double FOCAL_LENGTH;
+extern double PROJ_FX;
+extern double PROJ_FY;
+extern double PROJ_CX;
+extern double PROJ_CY;
 const int WINDOW_SIZE = 10;
 const int NUM_OF_CAM = 1;
 const int NUM_OF_F = 1000;
@@ -27,6 +34,16 @@ extern double GYR_N, GYR_W;
 extern std::vector<Eigen::Matrix3d> RIC;
 extern std::vector<Eigen::Vector3d> TIC;
 extern Eigen::Vector3d G;
+
+
+extern std::string IMG_RESULT_PATH;
+extern std::string GT_RESULT_PATH;
+extern std::string GT_VISUALZE_PATH;
+extern std::string VALIDITY_RESULT_PATH;
+extern std::string POSE_RESULT_PATH;
+extern std::string FEATURE_RESULT_PATH;
+extern std::string MESH_RESULT_PATH;
+
 
 extern double BIAS_ACC_THRESHOLD;
 extern double BIAS_GYR_THRESHOLD;

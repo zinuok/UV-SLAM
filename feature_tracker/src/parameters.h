@@ -7,8 +7,11 @@ extern int COL;
 extern double FOCAL_LENGTH;
 const int NUM_OF_CAM = 1;
 
+extern int POINT_ONLY;
+extern int ENABLE_DEPTH;
 
 extern std::string IMAGE_TOPIC;
+extern std::string DEPTH_TOPIC;
 extern std::string IMU_TOPIC;
 extern std::string FISHEYE_MASK;
 extern std::vector<std::string> CAM_NAMES;

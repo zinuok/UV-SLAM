@@ -16,6 +16,7 @@
 #include "factor/imu_factor.h"
 #include "factor/pose_local_parameterization.h"
 #include "factor/projection_factor.h"
+#include "factor/projection_factor_virtual.h"
 #include "factor/projection_td_factor.h"
 #include "factor/marginalization_factor.h"
 #include "factor/line_projection_factor.h"
@@ -24,6 +25,7 @@
 #include <queue>
 #include <opencv2/core/eigen.hpp>
 #include <Eigen/Dense>
+#include "CDT.h"
 
 class Estimator
 {
@@ -36,7 +38,14 @@ class Estimator
     void processIMU(double t, const Vector3d &linear_acceleration, const Vector3d &angular_velocity);
     // todo
     void processImage(const map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> &image,
-                      const map<int, vector<Eigen::Matrix<double, 15, 1>>> &image_line, const std_msgs::Header &header);
+                      const map<int, vector<Eigen::Matrix<double, 15, 1>>> &image_line,
+                      const std_msgs::Header &header,
+                      const Mat latest_image,
+                      const Mat latest_depth);
+    void processImage(const map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> &image,
+                      const map<int, vector<Eigen::Matrix<double, 15, 1>>> &image_line,
+                      const std_msgs::Header &header,
+                      const Mat latest_image);
     void setReloFrame(double _frame_stamp, int _frame_index, vector<Vector3d> &_match_points, Vector3d _relo_t, Matrix3d _relo_r);
 
     // internal
@@ -46,13 +55,14 @@ class Estimator
     bool relativePose(Matrix3d &relative_R, Vector3d &relative_T, int &l);
     bool relativePoseForLine(Matrix3d &relative_R, Vector3d &relative_T, int &l);
     void slideWindow();
-    void solveOdometry();
+    void solveOdometry(double header_t);
     void slideWindowNew();
     void slideWindowOld();
     void optimization();
     void vector2double();
     void double2vector();
     bool failureDetection();
+
 
     enum SolverFlag
     {
@@ -65,6 +75,8 @@ class Estimator
         MARGIN_OLD = 0,
         MARGIN_SECOND_NEW = 1
     };
+
+    int DEPTH_SCALE = 256;
 
     SolverFlag solver_flag;
     MarginalizationFlag  marginalization_flag;
@@ -109,11 +121,15 @@ class Estimator
     vector<Vector3d> key_poses;
     double initial_timestamp;
 
+    vector<pair<Vector3d, Vector3d>> cdt_lines_vis;
+    vector<Vector3d> cdt_points;
+
 
 
     double para_Pose[WINDOW_SIZE + 1][SIZE_POSE];
     double para_SpeedBias[WINDOW_SIZE + 1][SIZE_SPEEDBIAS];
     double para_Feature[NUM_OF_F][SIZE_FEATURE]; // INVERSE DEPTH
+    double para_Depth[NUM_OF_F][SIZE_FEATURE]; // DEPTH
     double para_Ex_Pose[NUM_OF_CAM][SIZE_POSE];
     double para_Retrive_Pose[SIZE_POSE];
     double para_Td[1][1];
@@ -144,4 +160,5 @@ class Estimator
     double relo_relative_yaw;
 
     cv::Mat latest_img;
+    cv::Mat latest_depth;
 };

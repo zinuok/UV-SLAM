@@ -18,7 +18,7 @@ vector<uchar> r_status;
 vector<float> r_err;
 queue<sensor_msgs::ImageConstPtr> img_buf;
 
-ros::Publisher pub_img, pub_match, pub_linematch, pub_latest_img;
+ros::Publisher pub_img, pub_match, pub_linematch, pub_latest_img, pub_latest_depth;
 ros::Publisher pub_restart;
 
 FeatureTracker trackerData[NUM_OF_CAM];
@@ -29,8 +29,11 @@ int pub_count = 1;
 bool first_image_flag = true;
 double last_image_time = 0;
 bool init_pub = 0;
+bool init_pub_ = 0;
 
-cv_bridge::CvImageConstPtr cam1_ptr;
+cv_bridge::CvImageConstPtr cam1_ptr = NULL;
+cv_bridge::CvImagePtr depth_ptr = NULL;
+ros::Time depth_time;
 
 void img1_callback(const sensor_msgs::ImageConstPtr &img_msg){
 
@@ -50,8 +53,50 @@ void img1_callback(const sensor_msgs::ImageConstPtr &img_msg){
         cam1_ptr = cv_bridge::toCvCopy(img_msg, sensor_msgs::image_encodings::MONO8);
 }
 
+
+void depth_callback(const sensor_msgs::ImageConstPtr &img_msg){
+
+    assert(ENABLE_DEPTH);
+    depth_time= img_msg->header.stamp;
+
+
+
+    if (img_msg->encoding == "16UC1")
+    {
+        sensor_msgs::Image img;
+        img.header = img_msg->header;
+        img.height = img_msg->height;
+        img.width = img_msg->width;
+        img.is_bigendian = img_msg->is_bigendian;
+        img.step = img_msg->step;
+        img.data = img_msg->data;
+        img.encoding = "mono16";
+        depth_ptr = cv_bridge::toCvCopy(img, sensor_msgs::image_encodings::MONO16);
+
+
+//        img.encoding = "16UC1";
+//        depth_ptr = cv_bridge::toCvCopy(img, sensor_msgs::image_encodings::TYPE_16UC1);
+
+    }
+    else
+        depth_ptr = cv_bridge::toCvCopy(img_msg, sensor_msgs::image_encodings::MONO8);
+}
+
+
+
+
 void img_callback(const sensor_msgs::ImageConstPtr &img_msg)
 {
+
+
+//    std::cout << "-------------------------------- start" << std::endl;
+//    std::cout << "I: " << img_msg->header.stamp << std::endl;
+//    std::cout << "D: " << depth_time << std::endl;
+
+    // declare local depth information for synchronization
+
+
+
     if(first_image_flag)
     {
         first_image_flag = false;
@@ -59,6 +104,15 @@ void img_callback(const sensor_msgs::ImageConstPtr &img_msg)
         last_image_time = img_msg->header.stamp.toSec();
         return;
     }
+
+    cv::Mat depth_image_local;
+    ros::Time depth_time_local;
+    if (ENABLE_DEPTH)
+    {
+        depth_time_local = depth_time;
+        depth_image_local = depth_ptr->image;
+    }
+
     // detect unstable camera stream
     if (img_msg->header.stamp.toSec() - last_image_time > 1.0 || img_msg->header.stamp.toSec() < last_image_time)
     {
@@ -71,6 +125,7 @@ void img_callback(const sensor_msgs::ImageConstPtr &img_msg)
         pub_restart.publish(restart_flag);
         return;
     }
+
     last_image_time = img_msg->header.stamp.toSec();
     // frequency control
     if (round(1.0 * pub_count / (img_msg->header.stamp.toSec() - first_image_time)) <= FREQ)
@@ -86,9 +141,12 @@ void img_callback(const sensor_msgs::ImageConstPtr &img_msg)
     else
         PUB_THIS_FRAME = false;
 
-    cv_bridge::CvImageConstPtr ptr;
-    cv_bridge::CvImagePtr ptr_line;
-    cv_bridge::CvImagePtr ptr_img;
+    cv_bridge::CvImageConstPtr ptr = NULL;
+    cv_bridge::CvImagePtr ptr_color = NULL;
+    cv_bridge::CvImagePtr ptr_new = NULL;
+    cv_bridge::CvImagePtr ptr_line = NULL;
+    cv_bridge::CvImagePtr ptr_img = NULL;
+
 
     if (img_msg->encoding == "8UC1")
     {
@@ -101,11 +159,23 @@ void img_callback(const sensor_msgs::ImageConstPtr &img_msg)
         img.data = img_msg->data;
         img.encoding = "mono8";
         ptr = cv_bridge::toCvCopy(img, sensor_msgs::image_encodings::MONO8);
+        ptr_color = cv_bridge::toCvCopy(img, sensor_msgs::image_encodings::BGR8);
+
     }
     else
+    {
         ptr = cv_bridge::toCvCopy(img_msg, sensor_msgs::image_encodings::MONO8);
+        ptr_color = cv_bridge::toCvCopy(img_msg, sensor_msgs::image_encodings::BGR8);
+    }
+
+
+//    std::cout << "I: " << img_msg->header.stamp << std::endl;
 
     cv::Mat show_img = ptr->image;
+
+//    cv::imshow("1", ptr_color->image);
+//    waitKey(1);
+
     TicToc t_r;
     for (int i = 0; i < NUM_OF_CAM; i++)
     {
@@ -115,20 +185,12 @@ void img_callback(const sensor_msgs::ImageConstPtr &img_msg)
             trackerData[i].readImage(ptr->image.rowRange(ROW * i, ROW * (i + 1)), img_msg->header.stamp.toSec());
             double t_point = t_r.toc();
             // Image undistortion and extract line
-            //std::chrono::system_clock::time_point start = std::chrono::system_clock::now();
-            lineTrackerData.readImage4Line(ptr->image, img_msg->header.stamp.toSec());
-            double t_line = t_r.toc();
-            //std::chrono::duration<double> sec = std::chrono::system_clock::now() - start;
-            //std::cout << "readStereoImage4Line processing time : " << sec.count()*1000 << " ms" << std::endl;
+            if (ENABLE_DEPTH)
+                lineTrackerData.readImage4Line(ptr->image, ptr_color->image, depth_image_local, img_msg->header.stamp.toSec());
+            else
+                lineTrackerData.readImage4Line(ptr->image, ptr_color->image, img_msg->header.stamp.toSec());
 
-//            std::string OUTPUT_PATH = "/home/hyunjun/time/frontend.txt";
-//            ofstream foutC(OUTPUT_PATH, ios::app);
-//            foutC.setf(ios::fixed, ios::floatfield);
-//            foutC.precision(3);
-//            foutC << t_point << " "
-//                  << t_line  << " "
-//                  << t_point + t_line << endl;
-//            foutC.close();
+            double t_line = t_r.toc();
         }
         else
         {
@@ -230,46 +292,52 @@ void img_callback(const sensor_msgs::ImageConstPtr &img_msg)
                     velocity_y_of_point.values.push_back(pts_velocity[j].y);
                 }
             }
+
             //for lines
-            auto &start_un_pts = lineTrackerData.curr_start_un_pts;
-            auto &end_un_pts = lineTrackerData.curr_end_un_pts;
-            auto &start_pts = lineTrackerData.curr_start_pts;
-            auto &end_pts = lineTrackerData.curr_end_pts;
-            auto &line_ids = lineTrackerData.ids;
-            auto &start_velocity = lineTrackerData.start_pts_velocity;
-            auto &end_velocity = lineTrackerData.end_pts_velocity;
-            auto &vpts = lineTrackerData.vps;
-
-            unsigned int num_line_cnt = 0;
-            for (unsigned int j = 0; j < line_ids.size(); j++)
+            if (!POINT_ONLY)
             {
+                auto &start_un_pts = lineTrackerData.curr_start_un_pts;
+                auto &end_un_pts = lineTrackerData.curr_end_un_pts;
+                auto &start_pts = lineTrackerData.curr_start_pts;
+                auto &end_pts = lineTrackerData.curr_end_pts;
+                auto &line_ids = lineTrackerData.ids;
+                auto &start_velocity = lineTrackerData.start_pts_velocity;
+                auto &end_velocity = lineTrackerData.end_pts_velocity;
+                auto &vpts = lineTrackerData.vps;
 
-                if (lineTrackerData.track_cnt[j] > 1)
+                unsigned int num_line_cnt = 0;
+                for (unsigned int j = 0; j < line_ids.size(); j++)
                 {
-                    num_line_cnt++;
 
-                    int p_id = line_ids[j];
+                    if (lineTrackerData.track_cnt[j] > 1)
+                    {
+                        num_line_cnt++;
 
-                    //TODO
-                    start_x_of_line.values.push_back(start_un_pts[j].x);
-                    start_y_of_line.values.push_back(start_un_pts[j].y);
-                    end_x_of_line.values.push_back(end_un_pts[j].x);
-                    end_y_of_line.values.push_back(end_un_pts[j].y);
-                    id_of_line.values.push_back(p_id);
-                    start_u_of_line.values.push_back(start_pts[j].x);
-                    start_v_of_line.values.push_back(start_pts[j].y);
-                    end_u_of_line.values.push_back(end_pts[j].x);
-                    end_v_of_line.values.push_back(end_pts[j].y);
-                    start_velocity_x_of_line.values.push_back(start_velocity[j].x);
-                    start_velocity_y_of_line.values.push_back(start_velocity[j].y);
-                    end_velocity_x_of_line.values.push_back(end_velocity[j].x);
-                    end_velocity_y_of_line.values.push_back(end_velocity[j].y);
-                    vp_x.values.push_back(vpts[j](0));
-                    vp_y.values.push_back(vpts[j](1));
-                    vp_z.values.push_back(vpts[j](2));
+                        int p_id = line_ids[j];
+
+                        //TODO
+                        start_x_of_line.values.push_back(start_un_pts[j].x);
+                        start_y_of_line.values.push_back(start_un_pts[j].y);
+                        end_x_of_line.values.push_back(end_un_pts[j].x);
+                        end_y_of_line.values.push_back(end_un_pts[j].y);
+                        id_of_line.values.push_back(p_id);
+                        start_u_of_line.values.push_back(start_pts[j].x);
+                        start_v_of_line.values.push_back(start_pts[j].y);
+                        end_u_of_line.values.push_back(end_pts[j].x);
+                        end_v_of_line.values.push_back(end_pts[j].y);
+                        start_velocity_x_of_line.values.push_back(start_velocity[j].x);
+                        start_velocity_y_of_line.values.push_back(start_velocity[j].y);
+                        end_velocity_x_of_line.values.push_back(end_velocity[j].x);
+                        end_velocity_y_of_line.values.push_back(end_velocity[j].y);
+                        vp_x.values.push_back(vpts[j](0));
+                        vp_y.values.push_back(vpts[j](1));
+                        vp_z.values.push_back(vpts[j](2));
+                    }
                 }
             }
         }
+
+
         //for points
         feature_points->channels.push_back(id_of_point); //0
         feature_points->channels.push_back(u_of_point); //1
@@ -278,22 +346,25 @@ void img_callback(const sensor_msgs::ImageConstPtr &img_msg)
         feature_points->channels.push_back(velocity_y_of_point); // 4
 
         //for lines
-        feature_points->channels.push_back(id_of_line); //5
-        feature_points->channels.push_back(start_x_of_line); //6
-        feature_points->channels.push_back(start_y_of_line); //7
-        feature_points->channels.push_back(end_x_of_line); //8
-        feature_points->channels.push_back(end_y_of_line); //9
-        feature_points->channels.push_back(start_u_of_line); //10
-        feature_points->channels.push_back(start_v_of_line); //11
-        feature_points->channels.push_back(end_u_of_line); //12
-        feature_points->channels.push_back(end_v_of_line); //13
-        feature_points->channels.push_back(start_velocity_x_of_line); //14
-        feature_points->channels.push_back(start_velocity_y_of_line); //15
-        feature_points->channels.push_back(end_velocity_x_of_line); //16
-        feature_points->channels.push_back(end_velocity_y_of_line); //17
-        feature_points->channels.push_back(vp_x); //18
-        feature_points->channels.push_back(vp_y); //19
-        feature_points->channels.push_back(vp_z); //20
+        if (!POINT_ONLY)
+        {
+            feature_points->channels.push_back(id_of_line); //5
+            feature_points->channels.push_back(start_x_of_line); //6
+            feature_points->channels.push_back(start_y_of_line); //7
+            feature_points->channels.push_back(end_x_of_line); //8
+            feature_points->channels.push_back(end_y_of_line); //9
+            feature_points->channels.push_back(start_u_of_line); //10
+            feature_points->channels.push_back(start_v_of_line); //11
+            feature_points->channels.push_back(end_u_of_line); //12
+            feature_points->channels.push_back(end_v_of_line); //13
+            feature_points->channels.push_back(start_velocity_x_of_line); //14
+            feature_points->channels.push_back(start_velocity_y_of_line); //15
+            feature_points->channels.push_back(end_velocity_x_of_line); //16
+            feature_points->channels.push_back(end_velocity_y_of_line); //17
+            feature_points->channels.push_back(vp_x); //18
+            feature_points->channels.push_back(vp_y); //19
+            feature_points->channels.push_back(vp_z); //20
+        }
 
         ROS_DEBUG("publish %f, at %f", feature_points->header.stamp.toSec(), ros::Time::now().toSec());
         // skip the first image; since no optical speed on frist image
@@ -302,7 +373,41 @@ void img_callback(const sensor_msgs::ImageConstPtr &img_msg)
             init_pub = 1;
         }
         else
+        {
+            if (ENABLE_DEPTH)
+            {
+                double td_image_depth = abs(img_msg->header.stamp.toSec() - depth_time_local.toSec());
+
+                // out of synch ! ignore this loop.
+                if (td_image_depth >= 1e-2)
+                    return ;
+            }
+
+
+
+            // image
+            ptr_new = cv_bridge::cvtColor(ptr, sensor_msgs::image_encodings::BGR8);
+            ptr_new->image = lineTrackerData.forw_img_color.clone();
+
+//            imshow("1", ptr_new->image);
+//            waitKey(1);
+//            ptr_new->image = trackerData[0].forw_img.clone();
+//            cv::cvtColor(ptr_new->image, ptr_new->image, CV_GRAY2RGB);
+
+            // depth
+            if (ENABLE_DEPTH)
+            {
+                depth_ptr->image = lineTrackerData.forw_depth.clone();
+                pub_latest_depth.publish(depth_ptr->toImageMsg());
+            }
+
+
+            // publish data -> [estimator]
+            pub_latest_img.publish(ptr_new->toImageMsg());
             pub_img.publish(feature_points);
+
+
+        }
 
         if (SHOW_TRACK)
         {
@@ -313,7 +418,11 @@ void img_callback(const sensor_msgs::ImageConstPtr &img_msg)
             ptr_img = cv_bridge::cvtColor(ptr, sensor_msgs::image_encodings::BGR8);
             ptr_img->image = lineTrackerData.forw_img.clone();
             cv::cvtColor(ptr_img->image, ptr_img->image, CV_GRAY2RGB);
-            pub_latest_img.publish(ptr_img->toImageMsg());
+
+//            if(!init_pub_)
+//                init_pub_ = 1;
+//            else
+//                pub_latest_img.publish(ptr_img->toImageMsg());
 
 //            imshow("1", ptr_img->image);
 //            waitKey(1);
@@ -332,12 +441,15 @@ void img_callback(const sensor_msgs::ImageConstPtr &img_msg)
                     cv::circle(tmp_img, trackerData[i].cur_pts[j], 2, cv::Scalar(255 * (1 - len), 0, 255 * len), 2);
                 }
 
-                for (unsigned int j = 0; j < lineTrackerData.curr_keyLine.size(); j++)
+                if (!POINT_ONLY)
                 {
-                    double len = std::min(1.0, 1.0 * lineTrackerData.track_cnt[j] / WINDOW_SIZE);
-                    cv::Point sp = Point(lineTrackerData.curr_keyLine[j].startPointX, lineTrackerData.curr_keyLine[j].startPointY);
-                    cv::Point ep = Point(lineTrackerData.curr_keyLine[j].endPointX, lineTrackerData.curr_keyLine[j].endPointY);
-                    line(ptr_line->image, sp, ep, Scalar(255*(1-len), 0, 255*len), 2);
+                    for (unsigned int j = 0; j < lineTrackerData.curr_keyLine.size(); j++)
+                    {
+                        double len = std::min(1.0, 1.0 * lineTrackerData.track_cnt[j] / WINDOW_SIZE);
+                        cv::Point sp = Point(lineTrackerData.curr_keyLine[j].startPointX, lineTrackerData.curr_keyLine[j].startPointY);
+                        cv::Point ep = Point(lineTrackerData.curr_keyLine[j].endPointX, lineTrackerData.curr_keyLine[j].endPointY);
+                        line(ptr_line->image, sp, ep, Scalar(255*(1-len), 0, 255*len), 2);
+                    }
                 }
 
             }
@@ -376,6 +488,7 @@ int main(int argc, char **argv)
     }
 
     ros::Subscriber sub_img = n.subscribe(IMAGE_TOPIC, 100, img_callback);
+    ros::Subscriber sub_depth = n.subscribe(DEPTH_TOPIC, 100, depth_callback);
     ros::Subscriber sub_img1 = n.subscribe("/cam1/image_raw", 100, img1_callback);
 
     pub_img = n.advertise<sensor_msgs::PointCloud>("feature", 1000);
@@ -388,6 +501,7 @@ int main(int argc, char **argv)
     pub_linematch = n.advertise<sensor_msgs::Image>("line_feature_img",1000);
 
     pub_latest_img = n.advertise<sensor_msgs::Image>("latest_img", 1000);
+    pub_latest_depth= n.advertise<sensor_msgs::Image>("latest_depth", 1000);
 
 
     /*

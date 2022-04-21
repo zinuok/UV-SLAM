@@ -21,6 +21,10 @@ void Estimator::setParameter()
 
 void Estimator::clearState()
 {
+
+    cdt_lines_vis.clear();
+    cdt_points.clear();
+
     for (int i = 0; i < WINDOW_SIZE + 1; i++)
     {
         Rs[i].setIdentity();
@@ -117,9 +121,15 @@ void Estimator::processIMU(double dt, const Vector3d &linear_acceleration, const
     gyr_0 = angular_velocity;
 }
 
+// with depth
 void Estimator::processImage(const map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> &image,
-                             const map<int, vector<Eigen::Matrix<double, 15, 1>>> &image_line, const std_msgs::Header &header)
+                             const map<int, vector<Eigen::Matrix<double, 15, 1>>> &image_line,
+                             const std_msgs::Header &header,
+                             const Mat latest_image,
+                             const Mat latest_depth_input)
 {
+    latest_img = latest_image.clone();
+    latest_depth = latest_depth_input.clone();
     ROS_DEBUG("new image coming ------------------------------------------");
     ROS_DEBUG("Adding feature points %lu", image.size());
     if (f_manager.addFeatureCheckParallax(frame_count, image, image_line, td)){
@@ -128,6 +138,8 @@ void Estimator::processImage(const map<int, vector<pair<int, Eigen::Matrix<doubl
     }
     else
         marginalization_flag = MARGIN_SECOND_NEW;
+
+
 
     ROS_DEBUG("this frame is--------------------%s", marginalization_flag ? "reject" : "accept");
     ROS_DEBUG("%s", marginalization_flag ? "Non-keyframe" : "Keyframe");
@@ -171,10 +183,12 @@ void Estimator::processImage(const map<int, vector<pair<int, Eigen::Matrix<doubl
             if(result)
             {
                 solver_flag = NON_LINEAR;
-                solveOdometry();
+                double header_t = double(header.stamp.sec) + double(header.stamp.nsec)*1e-9;
+                solveOdometry(header_t);
                 slideWindow();
                 f_manager.removeFailures();
-                f_manager.removeLineFailures();
+                if (!POINT_ONLY)
+                    f_manager.removeLineFailures();
                 ROS_INFO("Initialization finish!");
                 last_R = Rs[WINDOW_SIZE];
                 last_P = Ps[WINDOW_SIZE];
@@ -192,7 +206,8 @@ void Estimator::processImage(const map<int, vector<pair<int, Eigen::Matrix<doubl
     {
 
         TicToc t_solve;
-        solveOdometry();
+        double header_t = double(header.stamp.sec) + double(header.stamp.nsec)*1e-9;
+        solveOdometry(header_t);
         ROS_DEBUG("solver costs: %fms", t_solve.toc());
 
         if (failureDetection())
@@ -208,7 +223,8 @@ void Estimator::processImage(const map<int, vector<pair<int, Eigen::Matrix<doubl
         TicToc t_margin;
         slideWindow();
         f_manager.removeFailures();
-        f_manager.removeLineFailures();
+        if (!POINT_ONLY)
+            f_manager.removeLineFailures();
         ROS_DEBUG("marginalization costs: %fms", t_margin.toc());
         // prepare output of VINS
         key_poses.clear();
@@ -221,6 +237,132 @@ void Estimator::processImage(const map<int, vector<pair<int, Eigen::Matrix<doubl
         last_P0 = Ps[0];
     }
 }
+
+
+
+
+
+
+// without depth
+void Estimator::processImage(const map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> &image,
+                             const map<int, vector<Eigen::Matrix<double, 15, 1>>> &image_line,
+                             const std_msgs::Header &header,
+                             const Mat latest_image)
+{
+    latest_img = latest_image.clone();
+    ROS_DEBUG("new image coming ------------------------------------------");
+    ROS_DEBUG("Adding feature points %lu", image.size());
+    if (f_manager.addFeatureCheckParallax(frame_count, image, image_line, td)){
+        marginalization_flag = MARGIN_OLD;
+
+    }
+    else
+        marginalization_flag = MARGIN_SECOND_NEW;
+
+
+
+    ROS_DEBUG("this frame is--------------------%s", marginalization_flag ? "reject" : "accept");
+    ROS_DEBUG("%s", marginalization_flag ? "Non-keyframe" : "Keyframe");
+    ROS_DEBUG("Solving %d", frame_count);
+    ROS_DEBUG("number of feature: %d", f_manager.getFeatureCount());
+    Headers[frame_count] = header;
+
+    ImageFrame imageframe(image, image_line, header.stamp.toSec());
+    imageframe.pre_integration = tmp_pre_integration;
+    all_image_frame.insert(make_pair(header.stamp.toSec(), imageframe));
+    tmp_pre_integration = new IntegrationBase{acc_0, gyr_0, Bas[frame_count], Bgs[frame_count]};
+
+    if(ESTIMATE_EXTRINSIC == 2)
+    {
+        ROS_INFO("calibrating extrinsic param, rotation movement is needed");
+        if (frame_count != 0)
+        {
+            vector<pair<Vector3d, Vector3d>> corres = f_manager.getCorresponding(frame_count - 1, frame_count);
+            Matrix3d calib_ric;
+            if (initial_ex_rotation.CalibrationExRotation(corres, pre_integrations[frame_count]->delta_q, calib_ric))
+            {
+                ROS_WARN("initial extrinsic rotation calib success");
+                ROS_WARN_STREAM("initial extrinsic rotation: " << endl << calib_ric);
+                ric[0] = calib_ric;
+                RIC[0] = calib_ric;
+                ESTIMATE_EXTRINSIC = 1;
+            }
+        }
+    }
+
+    if (solver_flag == INITIAL)
+    {
+        if (frame_count == WINDOW_SIZE)
+        {
+            bool result = false;
+            if( ESTIMATE_EXTRINSIC != 2 && (header.stamp.toSec() - initial_timestamp) > 0.1)
+            {
+                result = initialStructure();
+                initial_timestamp = header.stamp.toSec();
+            }
+            if(result)
+            {
+                solver_flag = NON_LINEAR;
+                double header_t = double(header.stamp.sec) + double(header.stamp.nsec)*1e-9;
+                solveOdometry(header_t);
+                slideWindow();
+                f_manager.removeFailures();
+                if (!POINT_ONLY)
+                    f_manager.removeLineFailures();
+                ROS_INFO("Initialization finish!");
+                last_R = Rs[WINDOW_SIZE];
+                last_P = Ps[WINDOW_SIZE];
+                last_R0 = Rs[0];
+                last_P0 = Ps[0];
+
+            }
+            else
+                slideWindow();
+        }
+        else
+            frame_count++;
+    }
+    else
+    {
+
+        TicToc t_solve;
+        double header_t = double(header.stamp.sec) + double(header.stamp.nsec)*1e-9;
+        solveOdometry(header_t);
+        ROS_DEBUG("solver costs: %fms", t_solve.toc());
+
+        if (failureDetection())
+        {
+            ROS_WARN("failure detection!");
+            failure_occur = 1;
+            clearState();
+            setParameter();
+            ROS_WARN("system reboot!");
+            return;
+        }
+
+        TicToc t_margin;
+        slideWindow();
+        f_manager.removeFailures();
+        if (!POINT_ONLY)
+            f_manager.removeLineFailures();
+        ROS_DEBUG("marginalization costs: %fms", t_margin.toc());
+        // prepare output of VINS
+        key_poses.clear();
+        for (int i = 0; i <= WINDOW_SIZE; i++)
+            key_poses.push_back(Ps[i]);
+
+        last_R = Rs[WINDOW_SIZE];
+        last_P = Ps[WINDOW_SIZE];
+        last_R0 = Rs[0];
+        last_P0 = Ps[0];
+    }
+}
+
+
+
+
+
+
 bool Estimator::initialStructure()
 {
     TicToc t_sfm;
@@ -508,18 +650,293 @@ bool Estimator::relativePoseForLine(Matrix3d &relative_R, Vector3d &relative_T, 
     return false;
 }
 
-void Estimator::solveOdometry()
+void Estimator::solveOdometry(double header_t)
 {
+    cdt_lines_vis.clear();
+    cdt_points.clear();
+
     if (frame_count < WINDOW_SIZE)
         return;
     if (solver_flag == NON_LINEAR)
     {
         TicToc t_tri;
         f_manager.triangulate(Ps, tic, ric);
-        f_manager.triangulateLine(Ps, Rs, tic, ric, latest_img);
+        if (!POINT_ONLY)
+            f_manager.triangulateLine(Ps, Rs, tic, ric, latest_img);
 
         ROS_DEBUG("triangulation costs %f", t_tri.toc());
         optimization();
+
+        CDT::Triangulation<double> cdt = CDT::Triangulation<double>(CDT::VertexInsertionOrder::AsProvided);
+        std::vector<CDT::V2d<double>> cdt_points, cdt_lines;
+        std::vector<CDT::Edge> cdt_edges;
+        Mat img = latest_img.clone();
+        Mat depth = latest_depth.clone();
+        Mat depth_vis = latest_depth.clone();
+        Mat features = Mat::zeros(depth.size(), CV_16UC1);
+        Mat validity = Mat::zeros(depth.size(), CV_8UC1);
+
+        Mat features_point = Mat::zeros(depth.size(), CV_16UC1);
+        Mat validity_point = Mat::zeros(depth.size(), CV_8UC1);
+
+//        cvtColor(img, img, CV_GRAY2BGR);
+
+        int cnt = 0;
+        for(auto &it_per_id : f_manager.feature)
+        {
+            if(it_per_id.estimated_depth > 0 && it_per_id.endFrame() == WINDOW_SIZE)
+            {
+                double pt_x = it_per_id.feature_per_frame[it_per_id.used_num - 1].point[0];
+                double pt_y = it_per_id.feature_per_frame[it_per_id.used_num - 1].point[1];
+
+                cv::Point2f un_cur_pt;
+                un_cur_pt.x = PROJ_FX * pt_x + PROJ_CX;
+                un_cur_pt.y = PROJ_FY * pt_y + PROJ_CY;
+
+//                cv::circle(img, un_cur_pt, 3, cv::Scalar(255, 0, 0), -1);
+                cdt_points.push_back(CDT::V2d<double>::make(un_cur_pt.x, un_cur_pt.y));
+
+                // add to feature matrix
+                cv::rectangle(features, un_cur_pt,un_cur_pt, it_per_id.estimated_depth * DEPTH_SCALE);
+                // add to feature matrix
+                cv::rectangle(features_point, un_cur_pt,un_cur_pt, it_per_id.estimated_depth * DEPTH_SCALE);
+
+                // add to validity matrix
+                cv::rectangle(validity, un_cur_pt,un_cur_pt, 255);
+                // add to validity matrix
+                cv::rectangle(validity_point, un_cur_pt,un_cur_pt, 255);
+
+                cnt ++;
+
+            }
+        }
+//        cout << "# pts: " << cnt << endl;
+
+        if (!POINT_ONLY)
+        {
+            for(auto &it_per_id : f_manager.line_feature)
+            {
+                if(/*it_per_id.used_num > LINE_WINDOW - 1 &&*/ it_per_id.endFrame() == WINDOW_SIZE)
+                {
+                    double sp_x = it_per_id.line_feature_per_frame[it_per_id.used_num - 1].start_point(0);
+                    double sp_y = it_per_id.line_feature_per_frame[it_per_id.used_num - 1].start_point(1);
+                    double ep_x = it_per_id.line_feature_per_frame[it_per_id.used_num - 1].end_point(0);
+                    double ep_y = it_per_id.line_feature_per_frame[it_per_id.used_num - 1].end_point(1);
+
+                    double scale = 1.0;
+
+                    int imu_i = it_per_id.start_frame + it_per_id.used_num - 1;
+                    Matrix3d R_wc = Rs[imu_i] * ric[0];
+                    Vector3d t_wc = Rs[imu_i] * tic[0] + Ps[imu_i];
+
+
+                    Vector3d sp_2d_c = it_per_id.line_feature_per_frame[it_per_id.used_num - 1].start_point;
+                    Vector3d ep_2d_c = it_per_id.line_feature_per_frame[it_per_id.used_num - 1].end_point;
+
+                    Vector3d sp_2d_p_c = Vector3d(sp_2d_c(0) + scale, -scale*(ep_2d_c(0) - sp_2d_c(0))/(ep_2d_c(1) - sp_2d_c(1)) + sp_2d_c(1), 1);
+                    Vector3d ep_2d_p_c = Vector3d(ep_2d_c(0) + scale, -scale*(ep_2d_c(0) - sp_2d_c(0))/(ep_2d_c(1) - sp_2d_c(1)) + ep_2d_c(1), 1);
+
+                    Vector3d pi_s = sp_2d_c.cross(sp_2d_p_c);
+                    Vector3d pi_e = ep_2d_c.cross(ep_2d_p_c);
+
+                    Vector4d pi_s_4d, pi_e_4d;
+                    pi_s_4d.head(3) = pi_s;
+                    pi_s_4d(3) = 1;
+                    pi_e_4d.head(3) = pi_e;
+                    pi_e_4d(3) = 1;
+
+                    AngleAxisd roll(it_per_id.orthonormal_vec(0), Vector3d::UnitX());
+                    AngleAxisd pitch(it_per_id.orthonormal_vec(1), Vector3d::UnitY());
+                    AngleAxisd yaw(it_per_id.orthonormal_vec(2), Vector3d::UnitZ());
+                    Eigen::Matrix<double, 3, 3, Eigen::RowMajor> Rotation_psi;
+                    Rotation_psi = roll * pitch * yaw;
+                    double pi = it_per_id.orthonormal_vec(3);
+
+                    Vector3d n_w = cos(pi) * Rotation_psi.block<3,1>(0,0);
+                    Vector3d d_w = sin(pi) * Rotation_psi.block<3,1>(0,1);
+
+                    Matrix<double, 6, 1> line_w;
+                    line_w.block<3,1>(0,0) = n_w;
+                    line_w.block<3,1>(3,0) = d_w;
+
+                    Matrix<double, 6, 6> T_cw;
+                    T_cw.setZero();
+                    T_cw.block<3,3>(0,0) = R_wc.transpose();
+                    T_cw.block<3,3>(0,3) = Utility::skewSymmetric(-R_wc.transpose()*t_wc) * R_wc.transpose();
+                    T_cw.block<3,3>(3,3) = R_wc.transpose();
+
+                    Matrix<double, 6, 1> line_c = T_cw * line_w;
+                    Vector3d n_c = line_c.block<3,1>(0,0);
+                    Vector3d d_c = line_c.block<3,1>(3,0);
+
+                    Matrix4d L_c;
+                    L_c.setZero();
+                    L_c.block<3,3>(0,0) = Utility::skewSymmetric(n_c);
+                    L_c.block<3,1>(0,3) = d_c;
+                    L_c.block<1,3>(3,0) = -d_c.transpose();
+
+                    Vector4d D_s = L_c * pi_s_4d;
+                    Vector4d D_e = L_c * pi_e_4d;
+
+                    Vector3d D_s_3d(D_s(0)/D_s(3), D_s(1)/D_s(3), D_s(2)/D_s(3));
+                    Vector3d D_e_3d(D_e(0)/D_e(3), D_e(1)/D_e(3), D_e(2)/D_e(3));
+
+                    Vector3d D_s_w = R_wc * D_s_3d + t_wc;
+                    Vector3d D_e_w = R_wc * D_e_3d + t_wc;
+
+                    double l_norm = (D_s_w-D_e_w).norm();
+
+//                    if (l_norm >= 10)
+//                        cout << "too large l_norm: " << l_norm << endl;
+
+                    double s_depth = D_s(2)/D_s(3) * DEPTH_SCALE;
+                    double e_depth = D_e(2)/D_e(3) * DEPTH_SCALE;
+
+
+                    if (s_depth < 0 || e_depth < 0 || l_norm >= 10)
+                        continue;
+                    if (isnan(s_depth) || isnan(e_depth) || isnan(l_norm))
+                    {
+                        continue;
+                    }
+
+//                    cout << "est l_norm: " << l_norm << " | s_d: " << s_depth << " | e_d: " << e_depth << endl;
+                    cdt_lines_vis.push_back(make_pair(D_s_w, D_e_w));
+
+                    // add to feature matrix
+                    cv::Point sp(PROJ_FX * sp_x + PROJ_CX,
+                                 PROJ_FY * sp_y + PROJ_CY);
+                    cv::Point ep(PROJ_FX * ep_x + PROJ_CX,
+                                 PROJ_FY * ep_y + PROJ_CY);
+
+                    LineIterator iter(features, sp, ep, LINE_8);
+
+                    for (int i = 0; i < iter.count; i++, iter++) {
+                       double alpha = double(i) / iter.count;
+                       double depth = s_depth * (1.0 - alpha) + e_depth * alpha;
+
+    //                   features(Rect(iter.pos(), Size(1, 1))) = depth;
+                       features.at<uint16_t>(iter.pos()) = depth; // much faster
+                    }
+
+                    // add to validity matrix
+                    cv::line(validity, sp,ep, 255);
+
+//                    line(img, sp, ep, Scalar(0, 0, 255), 5);
+
+
+
+                    auto lv1 = CDT::V2d<double>::make(sp.x, sp.y);
+                    auto lv2 = CDT::V2d<double>::make(ep.x, ep.y);
+                    auto it = find_if(cdt_points.begin(),cdt_points.end(),
+                                      [&,lv1](CDT::V2d<double> v)
+                    { return v.x == lv1.x && v.y == lv1.y; }
+                    );
+
+                    auto sp_vindex = cdt_points.size();
+                    if (it != cdt_points.end())
+                        sp_vindex = std::distance(cdt_points.begin(), it);
+                    else
+                        cdt_points.push_back(lv1);
+
+
+                    it = find_if(cdt_points.begin(),cdt_points.end(),
+                                 [&,lv2](CDT::V2d<double> v)
+                    { return v.x == lv2.x && v.y == lv2.y; }
+                    );
+                    auto ep_vindex = cdt_points.size();
+                    if (it != cdt_points.end())
+                        ep_vindex = std::distance(cdt_points.begin(), it);
+                    else
+                        cdt_points.push_back(lv2);
+
+                    cdt_edges.push_back(CDT::Edge(sp_vindex,ep_vindex));
+                }
+            }
+        }
+        cdt.insertVertices(cdt_points);
+        if (!POINT_ONLY)
+            cdt.insertEdges(cdt_edges);
+        cdt.eraseSuperTriangle();
+
+
+
+        /**************** save result ****************/
+
+        // 1) mesh_uv
+        std::ofstream myfile;
+        myfile.open(MESH_RESULT_PATH+"/"+to_string(header_t)+".csv");
+
+        auto cdt_triangles = cdt.triangles;
+        for (unsigned int j = 0; j < cdt_triangles.size(); j++)
+        {
+            auto v1 = cdt_triangles[j].vertices[0];
+            auto v2 = cdt_triangles[j].vertices[1];
+            auto v3 = cdt_triangles[j].vertices[2];
+
+            myfile << cdt_points[v1].x << "," << cdt_points[v1].y << endl;
+            myfile << cdt_points[v2].x << "," << cdt_points[v2].y << endl;
+            myfile << cdt_points[v3].x << "," << cdt_points[v3].y << endl;
+
+//            line(img, Point(cdt_points[v1].x, cdt_points[v1].y), Point(cdt_points[v2].x, cdt_points[v2].y), Scalar(0, 255, 0), 1);
+//            line(img, Point(cdt_points[v2].x, cdt_points[v2].y), Point(cdt_points[v3].x, cdt_points[v3].y), Scalar(0, 255, 0), 1);
+//            line(img, Point(cdt_points[v3].x, cdt_points[v3].y), Point(cdt_points[v1].x, cdt_points[v1].y), Scalar(0, 255, 0), 1);
+
+        }
+        myfile.close();
+
+        imshow("1", img);
+        waitKey(1);
+
+
+
+        /*
+         * Note: depth images are saved in [m] unit multiplied by DEPTH_SCALE (= 256.0)
+         * (depth images in 16UC1 format is [mm] unit conventionally.)
+         */
+        string from = "PLAD_v2";
+        string to   = "PLAD_point_v2";
+        string IMG_RESULT_PATH_POINT = IMG_RESULT_PATH;
+        string GT_RESULT_PATH_POINT = GT_RESULT_PATH;
+        string GT_VISUALZE_PATH_POINT = GT_VISUALZE_PATH;
+        string FEATURE_RESULT_PATH_POINT = FEATURE_RESULT_PATH;
+        string VALIDITY_RESULT_PATH_POINT = VALIDITY_RESULT_PATH;
+
+
+
+        bool save = true;
+        if (save)
+        {   // 1) RGB image
+            imwrite(IMG_RESULT_PATH+"/"+to_string(header_t)+".png", img);
+//            IMG_RESULT_PATH_POINT.replace(IMG_RESULT_PATH_POINT.find(from), from.length(), to);
+//            imwrite(IMG_RESULT_PATH_POINT+"/"+to_string(header_t)+".png", img);
+
+            // 2-1) GT depth image
+            imwrite(GT_RESULT_PATH+"/"+to_string(header_t)+".png", depth * DEPTH_SCALE / 1000);
+//            GT_RESULT_PATH_POINT.replace(GT_RESULT_PATH_POINT.find(from), from.length(), to);
+//            imwrite(GT_RESULT_PATH_POINT+"/"+to_string(header_t)+".png", depth * DEPTH_SCALE / 1000);
+
+
+            // 2-2) GT depth visualize
+            imwrite(GT_VISUALZE_PATH+"/"+to_string(header_t)+".png", depth * DEPTH_SCALE); // store in [mm] unit just for visualization purpose
+//            GT_VISUALZE_PATH_POINT.replace(GT_VISUALZE_PATH_POINT.find(from), from.length(), to);
+//            imwrite(GT_VISUALZE_PATH_POINT+"/"+to_string(header_t)+".png", depth * DEPTH_SCALE);
+
+            // 3) Feature depth image
+            imwrite(FEATURE_RESULT_PATH+"/"+to_string(header_t)+".png", features);
+//            FEATURE_RESULT_PATH_POINT.replace(FEATURE_RESULT_PATH_POINT.find(from), from.length(), to);
+//            imwrite(FEATURE_RESULT_PATH_POINT+"/"+to_string(header_t)+".png", features_point);
+
+            // 4) Validity map (where feature depth != 0)
+            imwrite(VALIDITY_RESULT_PATH+"/"+to_string(header_t)+".png", validity);
+//            VALIDITY_RESULT_PATH_POINT.replace(VALIDITY_RESULT_PATH_POINT.find(from), from.length(), to);
+//            imwrite(VALIDITY_RESULT_PATH_POINT+"/"+to_string(header_t)+".png", validity_point);
+
+
+
+            cout << "[" << std::fixed << header_t << "] frame has been saved" << endl;
+
+        }
     }
 }
 
@@ -566,7 +983,10 @@ void Estimator::vector2double()
 
     VectorXd dep = f_manager.getDepthVector();
     for (int i = 0; i < f_manager.getFeatureCount(); i++)
+    {
         para_Feature[i][0] = dep(i);
+        para_Depth[i][0]   = 1/dep(i);
+    }
 
 
     if (ESTIMATE_TD)
@@ -659,7 +1079,9 @@ void Estimator::double2vector()
     }
     VectorXd dep = f_manager.getDepthVector();
     for (int i = 0; i < f_manager.getFeatureCount(); i++)
+    {
         dep(i) = para_Feature[i][0];
+    }
     f_manager.setDepth(dep);
 
 
@@ -690,7 +1112,7 @@ void Estimator::double2vector()
 
     }
 
-//    cout << "double2vector: " << f_manager.getLineFeatureCount() << endl;
+
     vector<Vector4d> get_lineOrtho = f_manager.getLineOrthonormal();
     for(int i =0; i < f_manager.getLineFeatureCount(); i++)
     {
@@ -698,17 +1120,15 @@ void Estimator::double2vector()
         get_lineOrtho.at(i)[1] = para_Ortho_plucker[i][1];
         get_lineOrtho.at(i)[2] = para_Ortho_plucker[i][2];
         get_lineOrtho.at(i)[3] = para_Ortho_plucker[i][3];
-
-//        cout << para_Ortho_plucker[i][0] << ", " <<
-//            para_Ortho_plucker[i][1] << ", " <<
-//            para_Ortho_plucker[i][2] << ", " <<
-//            para_Ortho_plucker[i][3] << endl;
-
     }
-//    f_manager.setOrthoPlucker(get_lineOrtho);
-    f_manager.setLineOrtho(get_lineOrtho, Ps, Rs, tic[0], ric[0]);
 
+    f_manager.setLineOrtho(get_lineOrtho, Ps, Rs, tic[0], ric[0]);
 }
+
+
+
+
+
 
 bool Estimator::failureDetection()
 {
@@ -864,6 +1284,15 @@ void Estimator::optimization()
                 ProjectionFactor *f = new ProjectionFactor(pts_i, pts_j);
                 problem.AddResidualBlock(f, loss_function, para_Pose[imu_i], para_Pose[imu_j], para_Ex_Pose[0], para_Feature[feature_index]);
             }
+
+
+//            ceres::CostFunction* cost_function = new ceres::AutoDiffCostFunction<ProjectionFactorVirtual, 1, 1, 1>
+//                    (new ProjectionFactorVirtual());
+//            problem.AddResidualBlock(cost_function, loss_function, para_Feature[feature_index], para_Depth[feature_index]);
+
+
+
+
             f_m_cnt++;
         }
     }
@@ -1000,6 +1429,7 @@ void Estimator::optimization()
     ROS_DEBUG("solver costs: %f", t_solver.toc());
 
     double2vector();
+
 
 
     TicToc t_whole_marginalization;

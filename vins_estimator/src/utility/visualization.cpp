@@ -1,4 +1,4 @@
-#include "visualization.h"
+﻿#include "visualization.h"
 
 using namespace ros;
 using namespace Eigen;
@@ -10,6 +10,8 @@ ros::Publisher pub_relo_relative_pose;
 ros::Publisher pub_camera_pose;
 ros::Publisher pub_camera_pose_visual;
 ros::Publisher pub_line_cloud;
+ros::Publisher pub_cdt_line_cloud;
+
 
 nav_msgs::Path path, relo_path;
 
@@ -70,6 +72,10 @@ void registerPub(ros::NodeHandle &n)
     pub_keyframe_line_stereo = n.advertise<visualization_msgs::Marker>("keyframe_lines_stereo", 1000);
     pub_keyframe_line_2d = n.advertise<visualization_msgs::Marker>("keyframe_lines_2d", 1000);
     pub_line_cloud = n.advertise<visualization_msgs::Marker>("line_cloud", 1000);
+    pub_cdt_line_cloud = n.advertise<visualization_msgs::Marker>("cdt_line_cloud", 1000);
+
+
+
     pub_line_margin = n.advertise<visualization_msgs::Marker>("line_history_cloud", 1000);
     pub_line_margin_VR = n.advertise<visualization_msgs::Marker>("line_history_cloud_vr", 1000);
     pub_line_deg = n.advertise<visualization_msgs::Marker>("degenerated_line", 1000);
@@ -282,6 +288,9 @@ void pubPointCloud(const Estimator &estimator, const std_msgs::Header &header)
     loop_point_cloud.header = header;
 
 
+
+
+    int i = 100;
     for (auto &it_per_id : estimator.f_manager.feature)
     {
         int used_num;
@@ -336,6 +345,45 @@ void pubPointCloud(const Estimator &estimator, const std_msgs::Header &header)
 double scale = 1.0;
 void pubLineCloud(const Estimator &estimator, std_msgs::Header &header)
 {
+
+    // pub CDT lines
+    visualization_msgs::Marker cdt_lines;
+    cdt_lines.header = header;
+    cdt_lines.header.frame_id = "world";
+    cdt_lines.ns = "cdt_lines";
+    cdt_lines.type = visualization_msgs::Marker::LINE_LIST;
+    cdt_lines.action = visualization_msgs::Marker::ADD;
+    cdt_lines.pose.orientation.w = 1.0;
+    cdt_lines.lifetime = ros::Duration(0);
+
+    cdt_lines.id = 11; //key_poses_id++;
+    cdt_lines.scale.x = 0.1;
+    cdt_lines.color.r = 1.0;
+    cdt_lines.color.g = 0.0;
+    cdt_lines.color.b = 0.0;
+    cdt_lines.color.a = 1.0;
+
+    geometry_msgs::Point sp_cdt;
+    geometry_msgs::Point ep_cdt;
+
+    for(auto &it: estimator.cdt_lines_vis)
+    {
+        Vector3d sp_line = it.first;
+        Vector3d ep_line = it.second;
+
+        sp_cdt.x = sp_line[0];
+        sp_cdt.y = sp_line[1];
+        sp_cdt.z = sp_line[2];
+        ep_cdt.x = ep_line[0];
+        ep_cdt.y = ep_line[1];
+        ep_cdt.z = ep_line[2];
+
+        cdt_lines.points.push_back(sp_cdt);
+        cdt_lines.points.push_back(ep_cdt);
+    }
+    pub_cdt_line_cloud.publish(cdt_lines);
+
+
     visualization_msgs::Marker key_lines;
     key_lines.header = header;
     key_lines.header.frame_id = "world";
@@ -360,23 +408,30 @@ void pubLineCloud(const Estimator &estimator, std_msgs::Header &header)
         if(it_per_id.solve_flag == 1)
         {
             int imu_i = it_per_id.start_frame;
+
+            // transformation (coord): world  -> camera (= camera w.r.t. world)
+            //                (point): camera -> camera (= camera w.r.t. world)
             Matrix3d R_wc = estimator.Rs[imu_i] * estimator.ric[0];
             Vector3d t_wc = estimator.Rs[imu_i] * estimator.tic[0] + estimator.Ps[imu_i] ;
 
+            // line end-points w.r.t. camera normal coord.
             Vector3d sp_2d_c = it_per_id.line_feature_per_frame[0].start_point;
             Vector3d ep_2d_c = it_per_id.line_feature_per_frame[0].end_point;
             Vector3d sp_2d_p_c = Vector3d(sp_2d_c(0) + scale, -scale*(ep_2d_c(0) - sp_2d_c(0))/(ep_2d_c(1) - sp_2d_c(1)) + sp_2d_c(1), 1);
             Vector3d ep_2d_p_c = Vector3d(ep_2d_c(0) + scale, -scale*(ep_2d_c(0) - sp_2d_c(0))/(ep_2d_c(1) - sp_2d_c(1)) + ep_2d_c(1), 1);
 
+            // 3D line in both directions w.r.t. camera normal coord.
             Vector3d pi_s = sp_2d_c.cross(sp_2d_p_c);
             Vector3d pi_e = ep_2d_c.cross(ep_2d_p_c);
 
+            // 3D line in both directions w.r.t. homog. camera normal coord.
             Vector4d pi_s_4d, pi_e_4d;
             pi_s_4d.head(3) = pi_s;
             pi_s_4d(3) = 1;
             pi_e_4d.head(3) = pi_e;
             pi_e_4d(3) = 1;
 
+            // orientation of line w.r.t. world: (R, pi)
             AngleAxisd roll(it_per_id.orthonormal_vec(0), Vector3d::UnitX());
             AngleAxisd pitch(it_per_id.orthonormal_vec(1), Vector3d::UnitY());
             AngleAxisd yaw(it_per_id.orthonormal_vec(2), Vector3d::UnitZ());
@@ -384,6 +439,7 @@ void pubLineCloud(const Estimator &estimator, std_msgs::Header &header)
             Rotation_psi = roll * pitch * yaw;
             double pi = it_per_id.orthonormal_vec(3);
 
+            // Plucker coord representation (w.r.t. world)
             Vector3d n_w = cos(pi) * Rotation_psi.block<3,1>(0,0);
             Vector3d d_w = sin(pi) * Rotation_psi.block<3,1>(0,1);
 
@@ -391,20 +447,20 @@ void pubLineCloud(const Estimator &estimator, std_msgs::Header &header)
             line_w.block<3,1>(0,0) = n_w;
             line_w.block<3,1>(3,0) = d_w;
 
-//            cout << "---------------" << endl;
-//            cout << n_w(0) << ", " << n_w(1) << ", " << n_w(2) << endl;
-//            cout << d_w(0) << ", " << d_w(1) << ", " << d_w(2) << endl;
-
+            // transformation (coord): camera -> world  (= world w.r.t. camera)
+            //                (point): world  -> camera (= camera w.r.t. world)
             Matrix<double, 6, 6> T_cw;
             T_cw.setZero();
             T_cw.block<3,3>(0,0) = R_wc.transpose();
             T_cw.block<3,3>(0,3) = Utility::skewSymmetric(-R_wc.transpose()*t_wc) * R_wc.transpose();
             T_cw.block<3,3>(3,3) = R_wc.transpose();
 
+            // 3D line w.r.t. camera coord.
             Matrix<double, 6, 1> line_c = T_cw * line_w;
             Vector3d n_c = line_c.block<3,1>(0,0);
             Vector3d d_c = line_c.block<3,1>(3,0);
 
+            // line end-points w.r.t. camera coord.
             Matrix4d L_c;
             L_c.setZero();
             L_c.block<3,3>(0,0) = Utility::skewSymmetric(n_c);
@@ -416,6 +472,7 @@ void pubLineCloud(const Estimator &estimator, std_msgs::Header &header)
             Vector3d D_s_3d(D_s(0)/D_s(3), D_s(1)/D_s(3), D_s(2)/D_s(3));
             Vector3d D_e_3d(D_e(0)/D_e(3), D_e(1)/D_e(3), D_e(2)/D_e(3));
 
+            // line end-points w.r.t. world
             Vector3d D_s_w = R_wc * D_s_3d + t_wc;
             Vector3d D_e_w = R_wc * D_e_3d + t_wc;
 
@@ -492,7 +549,7 @@ void pubLineCloud(const Estimator &estimator, std_msgs::Header &header)
 
             int imu_i = it_per_id.start_frame;
             Matrix3d R_wc = estimator.Rs[imu_i] * estimator.ric[0];
-            Vector3d t_wc = estimator.Rs[imu_i] * estimator.tic[0] + estimator.Ps[imu_i] ;
+            Vector3d t_wc = estimator.Rs[imu_i] * estimator.tic[0] + estimator.Ps[imu_i];
 
             Vector3d sp_2d_c = it_per_id.line_feature_per_frame[0].start_point;
             Vector3d ep_2d_c = it_per_id.line_feature_per_frame[0].end_point;

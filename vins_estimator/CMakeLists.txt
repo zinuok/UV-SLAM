@@ -21,7 +21,7 @@ find_package(OpenCV REQUIRED)
 
 find_package(Ceres REQUIRED)
 find_package(OpenCV 3 REQUIRED )
-
+find_package(CDT REQUIRED CONFIG)
 
 include_directories(${catkin_INCLUDE_DIRS} ${CERES_INCLUDE_DIRS} ${OpenCV_INCLUDE_DIRS})
 
@@ -41,6 +41,7 @@ add_executable(vins_estimator
     src/feature_manager.cpp
     src/factor/pose_local_parameterization.cpp
     src/factor/projection_factor.cpp
+    src/factor/projection_factor_virtual.cpp
     src/factor/projection_td_factor.cpp
     src/factor/marginalization_factor.cpp
     src/factor/line_projection_factor.cpp

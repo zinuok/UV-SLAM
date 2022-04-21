@@ -11,39 +11,65 @@ unsigned int matched_count = 0;
 int keyLine_id = 0;
 int img_num = 0;
 
-upm::ELSED elsed;
 
 LineFeatureTracker::LineFeatureTracker()
 {
 }
 
-void LineFeatureTracker::readImage4Line(const Mat &_img, double _cur_time)
+void LineFeatureTracker::readImage4Line(const Mat &_img, const Mat &_img_color, const Mat &_depth, double _cur_time)
 {
     TicToc t_r;
-    Mat img;
+    Mat img, img_color, depth;
     if (EQUALIZE) //always equlize true
     {
         Ptr<CLAHE> clahe = createCLAHE(3.0, Size(8, 8));
         TicToc t_c;
         clahe->apply(_img, img);
+        clahe->apply(_depth, depth);
 
         ROS_DEBUG("CLAHE costs: %fms", t_c.toc());
     }
     else
+    {
         img = _img;
+        depth = _depth;
+    }
+    img_color = _img_color;
 
     /// raw image undistortion
-    Mat undistort_img, undistort_img1;
+    Mat undistort_img, undistort_img_color, undistort_img1;
     imageUndistortion(img, undistort_img);
+    imageUndistortion(img_color, undistort_img_color);
     if (forw_img.empty())
+    {
         prev_img = curr_img = forw_img = undistort_img.clone();
+        prev_img_color = curr_img_color = forw_img_color = undistort_img_color.clone();
+    }
     else
+    {
         forw_img = undistort_img.clone();
+        forw_img_color = undistort_img_color.clone();
+    }
+
+
+    /// raw depth undistortion
+    Mat undistort_depth;
+    imageUndistortion(depth, undistort_depth);
+    if (forw_depth.empty())
+        prev_depth = curr_depth = forw_depth = undistort_depth.clone();
+    else
+        forw_depth = undistort_depth.clone();
 
     if(DIST_K1 > 0)
     {
         forw_img = forw_img.rowRange(ROW_MARGIN, ROW - ROW_MARGIN);
         forw_img = forw_img.colRange(COL_MARGIN, COL - COL_MARGIN);
+
+        forw_img_color = forw_img_color.rowRange(ROW_MARGIN, ROW - ROW_MARGIN);
+        forw_img_color = forw_img_color.colRange(COL_MARGIN, COL - COL_MARGIN);
+
+        forw_depth = forw_depth.rowRange(ROW_MARGIN, ROW - ROW_MARGIN);
+        forw_depth = forw_depth.colRange(COL_MARGIN, COL - COL_MARGIN);
     }
 
     Mat img1 = curr_img.clone();
@@ -53,18 +79,6 @@ void LineFeatureTracker::readImage4Line(const Mat &_img, double _cur_time)
     cvtColor(img2, img2, CV_GRAY2BGR);
 //    cvtColor(merged_img, merged_img, CV_GRAY2BGR);
 
-    vector<Vector3d> para_vector;
-    vector<double> length_vector;
-    vector<double> orientation_vector;
-    vector<std::vector<Vector3d> > vpHypo;
-    vector<std::vector<double> > sphereGrid;
-    vector<Vector3d> tmp_vps;
-    vector<Vector3d> cluster_vps;
-    vector<int> line_vp_ids;
-    vector<vector<int>> clusters;
-    vector<int> local_vp_ids;
-    double thAngle = 1.0 / 180.0 * CV_PI;
-
     if(curr_keyLine.size()>0)
     {
         vector<uchar> status;
@@ -72,16 +86,25 @@ void LineFeatureTracker::readImage4Line(const Mat &_img, double _cur_time)
         vector<Point2f> forw_start_pts, forw_end_pts;
         Mat forw_descriptor;
 
-        TicToc t_r;
-        lineExtraction(forw_img, forw_keyLine, forw_descriptor);
-        double t_extraction = t_r.toc();
-        lineMatching(curr_keyLine, forw_keyLine, curr_descriptor, forw_descriptor, good_match_vector);
-        double t_matching = t_r.toc() - t_extraction;
-//        cout << t_extraction << ", " << t_matching << endl;
-//        double t_linematching = t_r.toc() - t_lineextraction;
-//        lineMergingTwoPhase( curr_img, forw_img, curr_keyLine, forw_keyLine, curr_descriptor, forw_descriptor, good_match_vector );
-//        double t_linemerging = t_r.toc() - t_linematching;
+        vector<Vector3d> para_vector;
+        vector<double> length_vector;
+        vector<double> orientation_vector;
+        vector<std::vector<Vector3d> > vpHypo;
+        vector<std::vector<double> > sphereGrid;
+        vector<Vector3d> tmp_vps;
+        vector<Vector3d> cluster_vps;
+        vector<int> line_vp_ids;
+        vector<vector<int>> clusters;
+        vector<int> local_vp_ids;
+        double thAngle = 1.0 / 180.0 * CV_PI;
 
+//        TicToc t_r;
+        lineExtraction(forw_img, forw_keyLine, forw_descriptor);
+//        double t_lineextraction = t_r.toc();
+        lineMatching(curr_keyLine, forw_keyLine, curr_descriptor, forw_descriptor, good_match_vector);
+//        double t_linematching = t_r.toc() - t_lineextraction;
+        lineMergingTwoPhase( curr_img, forw_img, curr_keyLine, forw_keyLine, curr_descriptor, forw_descriptor, good_match_vector );
+//        double t_linemerging = t_r.toc() - t_linematching;
 
         if(forw_keyLine.size() > 1)
         {
@@ -89,263 +112,6 @@ void LineFeatureTracker::readImage4Line(const Mat &_img, double _cur_time)
             getSphereGrids(forw_keyLine, para_vector, length_vector, orientation_vector, sphereGrid );
             getBestVpsHyp(sphereGrid, vpHypo, tmp_vps);
             lines2Vps(forw_keyLine, thAngle, tmp_vps, clusters, local_vp_ids);
-//            double t_vp = t_r.toc() - t_linemerging;
-            //        drawClusters(img2, forw_keyLine, clusters);
-
-//            const int model_size = 500;
-//            vector<Point2f> model_hypotheses;
-//            Mat tmp_img = forw_img.clone();
-//            cvtColor(forw_img, tmp_img, CV_GRAY2BGR);
-
-//            while(model_hypotheses.size() < model_size)
-//            {
-//                int a = rand()%(forw_keyLine.size());
-//                int b = rand()%(forw_keyLine.size());
-
-//                if(a == b)
-//                    continue;
-
-//                line_descriptor::KeyLine kl1 = forw_keyLine.at(a);
-//                line_descriptor::KeyLine kl2 = forw_keyLine.at(b);
-
-//                Vector3d sp1 = Vector3d(kl1.startPointX, kl1.startPointY, 1);
-//                Vector3d ep1 = Vector3d(kl1.endPointX, kl1.endPointY, 1);
-
-//                Vector3d sp2 = Vector3d(kl2.startPointX, kl2.startPointY, 1);
-//                Vector3d ep2 = Vector3d(kl2.endPointX, kl2.endPointY, 1);
-
-//                Vector3d line1 = sp1.cross(ep1);
-//                Vector3d line2 = sp2.cross(ep2);
-//                //            if(line1(2) == 0.0)
-//                //                line1(2) = 0.001;
-//                //            if(line2(2) == 0.0)
-//                //                line2(2) = 0.001;
-//                //            line1 = line1/line1(2);
-//                //            line2 = line2/line2(2);
-
-//                Vector3d vp = line1.cross(line2);
-//                if(vp(2) == 0.0)
-//                    vp(2) = 0.0011;
-//                vp = vp/vp(2);
-//                if(isnan(vp(0)) || isnan(vp(1)))
-//                    continue;
-
-//                model_hypotheses.push_back(Point2f(vp(0), vp(1)));
-//            }
-
-//            MatrixXd preference_matrix(forw_keyLine.size(), model_hypotheses.size());
-//            double th_angle = CV_PI * 3.0/180.0;
-//            double th_dist = 0.9;
-//            preference_matrix.setZero();
-
-//            for(int i = 0; i < model_hypotheses.size(); i++)
-//            {
-//                Point2f vp = model_hypotheses[i];
-//                for(int j = 0; j < forw_keyLine.size(); j++)
-//                {
-//                    Point2f sp(forw_keyLine[j].getStartPoint());
-//                    Point2f ep(forw_keyLine[j].getEndPoint());
-//                    Point2f mid = (sp + ep)/2;
-
-//                    double angle = SafeAcos((ep-vp).dot(sp-vp)/(norm(ep-vp)*norm(sp-vp)));
-//                    double mid_angle = SafeAcos((mid - vp).dot(ep-sp)/(norm(mid-vp)*norm(ep-sp)));
-//                    angle = min( CV_PI - angle, angle );
-//                    mid_angle = min( CV_PI - mid_angle, mid_angle );
-
-//                    if(mid_angle < th_angle)
-//                        preference_matrix(j, i) = 1;
-//                    else
-//                        preference_matrix(j, i) = 0;
-//                }
-//            }
-
-//            vector<VectorXd> cluster_sets;
-//            vector<int> cluster_ids;
-//            vector<int> counts;
-//            vector<Scalar> colors;
-
-//            for(int i = 0; i < forw_keyLine.size(); i++)
-//            {
-//                VectorXd ps = preference_matrix.row(i);
-//                if(cluster_sets.empty())
-//                {
-//                    cluster_sets.push_back(ps);
-//                    counts.push_back(1);
-//                    Scalar color = Scalar(rand()%255, rand()%255, rand()%255);
-//                    colors.push_back(color);
-//                    continue;
-//                }
-
-//                int min_id = -1;
-//                double min_dist = 1;
-//                for(int j = 0; j < cluster_sets.size(); j++)
-//                {
-//                    VectorXd cs = cluster_sets[j];
-//                    double j_dist = (Union_dist(ps, cs) - Intersection_dist(ps, cs))
-//                            /Union_dist(ps, cs);
-//                    //                cout << j_dist << endl;
-//                    if(j_dist < min_dist)
-//                    {
-//                        min_id = j;
-//                        min_dist = j_dist;
-//                    }
-//                }
-
-//                if(min_dist < th_dist)
-//                {
-//                    counts[min_id] += 1;
-//                    cluster_sets[min_id] = Intersection(ps, cluster_sets[min_id]);
-//                }
-//                else
-//                {
-//                    cluster_sets.push_back(ps);
-//                    counts.push_back(1);
-//                    Scalar color = Scalar(rand()%255, rand()%255, rand()%255);
-//                    colors.push_back(color);
-//                }
-//            }
-//            //        cout << cluster_sets.size() << endl;
-
-//            for(int i = counts.size()-1; i >= 0; i--)
-//            {
-//                if(counts[i] < 2)
-//                {
-//                    cluster_sets.erase(cluster_sets.begin() + i);
-//                    counts.erase(counts.begin() + i);
-//                }
-//            }
-//            //        cout << counts.size() << endl;
-
-//            for(int i = 0; i < forw_keyLine.size(); i++)
-//            {
-//                double min_dist = 1;
-//                int min_id = -1;
-//                for(int j = 0; j < cluster_sets.size(); j++)
-//                {
-//                    VectorXd ps = preference_matrix.row(i);
-//                    VectorXd cs = cluster_sets[j];
-//                    double j_dist = (Union_dist(ps, cs) - Intersection_dist(ps, cs))
-//                            /Union_dist(ps, cs);
-//                    if(j_dist < min_dist)
-//                    {
-//                        min_id = j;
-//                        min_dist = j_dist;
-//                    }
-//                }
-//                if(min_dist < th_dist)
-//                {
-//                    int myFontFace = 2;
-//                    double myFontScale = 0.5;
-//                    //                putText(tmp_img,to_string(min_id),(forw_keyLine[i].getStartPoint()+forw_keyLine[i].getEndPoint())/2,myFontFace,myFontScale,Scalar(0,255,0));
-//                    line(tmp_img, forw_keyLine[i].getStartPoint(), forw_keyLine[i].getEndPoint(), colors[min_id], 2);
-//                    line_vp_ids.push_back(min_id);
-//                }
-//                else
-//                {
-//                    line(tmp_img, forw_keyLine[i].getStartPoint(), forw_keyLine[i].getEndPoint(), Scalar(0,0,0), 2);
-//                    line_vp_ids.push_back(-1);
-//                }
-//            }
-
-//            vector<vector<KeyLine>> cluster_lines(counts.size());
-//            for(int i = 0; i < forw_keyLine.size(); i++)
-//            {
-//                KeyLine kl = forw_keyLine[i];
-//                int line_vp_id = line_vp_ids[i];
-//                if(line_vp_id != -1)
-//                {
-//                    cluster_lines[line_vp_id].push_back(kl);
-//                }
-//            }
-
-//        cluster_vps.clear();
-//        for(int i = 0; i < counts.size(); i++)
-//        {
-//            if(cluster_lines[i].size() == 0)
-//            {
-//                cluster_vps.push_back(Vector3d(0,0,0));
-//                continue;
-//            }
-//            int count = 0;
-//            Vector3d vp_mean(0,0,0);
-//            while(count < 10)
-//            {
-//                int a = rand()%(counts[i]);
-//                int b = rand()%(counts[i]);
-
-//                if(a == b)
-//                    continue;
-
-//                line_descriptor::KeyLine kl1 = cluster_lines[i][a];
-//                line_descriptor::KeyLine kl2 = cluster_lines[i][b];
-
-//                Vector3d sp1 = Vector3d(kl1.startPointX, kl1.startPointY, 1);
-//                Vector3d ep1 = Vector3d(kl1.endPointX, kl1.endPointY, 1);
-
-//                Vector3d sp2 = Vector3d(kl2.startPointX, kl2.startPointY, 1);
-//                Vector3d ep2 = Vector3d(kl2.endPointX, kl2.endPointY, 1);
-
-//                Vector3d line1 = sp1.cross(ep1);
-//                Vector3d line2 = sp2.cross(ep2);
-
-////                if(line1(2) == 0.0)
-////                    line1(2) = 0.001;
-////                if(line2(2) == 0.0)
-////                    line2(2) = 0.001;
-////                line1 = line1/line1(2);
-////                line2 = line2/line2(2);
-
-//                Vector3d vp = line1.cross(line2);
-//                if(vp(2) == 0.0)
-//                    vp(2) = 0.0011;
-
-//                vp = vp/vp(2);
-//                if(isnan(vp(0)) || isnan(vp(1)))
-//                    continue;
-
-//                vp_mean = vp_mean + vp;
-//                count++;
-//            }
-//            vp_mean = vp_mean/10;
-//            cluster_vps.push_back(vp_mean);
-//        }
-
-//        imshow("1", tmp_img);
-//        waitKey(1);
-//        string a = "/home/hyunjun/image/" + to_string(image_id) + "_Jlinkage" +".png";
-//        imwrite(a, tmp_img);
-
-//        tmp_img = forw_img.clone();
-//        cvtColor(forw_img, tmp_img, CV_GRAY2BGR);
-
-//        for ( int i=0; i<forw_keyLine.size(); ++i )
-//        {
-//            int idx = i;
-//            cv::Point2f pt_s = forw_keyLine[i].getStartPoint();
-//            cv::Point2f pt_e = forw_keyLine[i].getEndPoint();
-
-//            cv::line( tmp_img, pt_s, pt_e, cv::Scalar(0,0,0), 2, CV_AA );
-//        }
-
-//        std::vector<cv::Scalar> lineColors( 3 );
-//        lineColors[0] = cv::Scalar( 0, 0, 255 );
-//        lineColors[1] = cv::Scalar( 0, 255, 0 );
-//        lineColors[2] = cv::Scalar( 255, 0, 0 );
-//        for ( int i = 0; i < clusters.size(); ++i )
-//        {
-//            for ( int j = 0; j < clusters[i].size(); ++j )
-//            {
-//                int idx = clusters[i][j];
-
-//                cv::Point2f pt_s = forw_keyLine[idx].getStartPoint();
-//                cv::Point2f pt_e = forw_keyLine[idx].getEndPoint();
-//                cv::line( tmp_img, pt_s, pt_e, lineColors[i], 2, CV_AA );
-//            }
-//        }
-//        a = "/home/hyunjun/image/" + to_string(image_id) + "_manhattan" +".png";
-//        imwrite(a, tmp_img);
-
-//        image_id+=1;
         }
 
         tmp_track_cnt.clear();
@@ -412,7 +178,7 @@ void LineFeatureTracker::readImage4Line(const Mat &_img, double _cur_time)
         }
 //        cout << "----" << endl;
 //        for(int i = 0; i < local2id.size(); i++)
-//            cout << i << " -> " << local2id[i] << endl;\
+//            cout << i << " -> " << local2id[i] << endl;
 
         ids.clear();
         track_cnt.clear();
@@ -427,6 +193,8 @@ void LineFeatureTracker::readImage4Line(const Mat &_img, double _cur_time)
 //        imshow("1", tmp_img);
 //        waitKey(1);
         curr_img = forw_img;
+        curr_img_color = forw_img_color;
+        curr_depth = forw_depth;
         curr_start_pts = forw_start_pts;
         curr_end_pts = forw_end_pts;
         curr_keyLine = forw_keyLine;
@@ -434,7 +202,19 @@ void LineFeatureTracker::readImage4Line(const Mat &_img, double _cur_time)
     }
     else
     {
+        vector<Vector3d> para_vector;
+        vector<double> length_vector;
+        vector<double> orientation_vector;
+        vector<std::vector<Vector3d> > vpHypo;
+        vector<std::vector<double> > sphereGrid;
+        vector<Vector3d> tmp_vps;
+        vector<vector<int>> clusters;
+        vector<int> local_vp_ids;
+        double thAngle = 3.0 / 180.0 * CV_PI;
+
         curr_img = forw_img.clone();
+        curr_img_color = forw_img_color.clone();
+        curr_depth = forw_depth.clone();
         lineExtraction(curr_img, curr_keyLine, curr_descriptor);
 
         if(curr_keyLine.size() > 1)
@@ -481,6 +261,7 @@ void LineFeatureTracker::readImage4Line(const Mat &_img, double _cur_time)
 
         Mat tmp_img = curr_img.clone();
         cvtColor(curr_img, tmp_img, CV_GRAY2BGR);
+        curr_img_color = forw_img_color;
 
         ids.clear();
         track_cnt.clear();
@@ -493,6 +274,7 @@ void LineFeatureTracker::readImage4Line(const Mat &_img, double _cur_time)
 //    {
 //        count += track_cnt[i];
 //    }
+
     prev_start_un_pts = curr_start_un_pts;
     prev_end_un_pts = curr_end_un_pts;
 
@@ -500,6 +282,255 @@ void LineFeatureTracker::readImage4Line(const Mat &_img, double _cur_time)
     int frame_index = 0;
 //    cout << t_r.toc() << endl;
 }
+
+
+void LineFeatureTracker::readImage4Line(const Mat &_img, const Mat &_img_color, double _cur_time)
+{
+    TicToc t_r;
+    Mat img, img_color;
+    if (EQUALIZE) //always equlize true
+    {
+        Ptr<CLAHE> clahe = createCLAHE(3.0, Size(8, 8));
+        TicToc t_c;
+        clahe->apply(_img, img);
+
+        ROS_DEBUG("CLAHE costs: %fms", t_c.toc());
+    }
+    else
+    {
+        img = _img;
+    }
+    img_color = _img_color;
+
+    /// raw image undistortion
+    Mat undistort_img, undistort_img_color, undistort_img1;
+    imageUndistortion(img, undistort_img);
+    imageUndistortion(img_color, undistort_img_color);
+    if (forw_img.empty())
+    {
+        prev_img = curr_img = forw_img = undistort_img.clone();
+        prev_img_color = curr_img_color = forw_img_color = undistort_img_color.clone();
+    }
+    else
+    {
+        forw_img = undistort_img.clone();
+        forw_img_color = undistort_img_color.clone();
+    }
+
+
+
+    Mat img1 = curr_img.clone();
+    Mat img2 = forw_img.clone();
+    Mat merged_img;
+    cvtColor(img1, img1, CV_GRAY2BGR);
+    cvtColor(img2, img2, CV_GRAY2BGR);
+//    cvtColor(merged_img, merged_img, CV_GRAY2BGR);
+
+    if(curr_keyLine.size()>0)
+    {
+        vector<uchar> status;
+        vector<DMatch> good_match_vector, good_match_vector2;
+        vector<Point2f> forw_start_pts, forw_end_pts;
+        Mat forw_descriptor;
+
+        vector<Vector3d> para_vector;
+        vector<double> length_vector;
+        vector<double> orientation_vector;
+        vector<std::vector<Vector3d> > vpHypo;
+        vector<std::vector<double> > sphereGrid;
+        vector<Vector3d> tmp_vps;
+        vector<Vector3d> cluster_vps;
+        vector<int> line_vp_ids;
+        vector<vector<int>> clusters;
+        vector<int> local_vp_ids;
+        double thAngle = 1.0 / 180.0 * CV_PI;
+
+//        TicToc t_r;
+        lineExtraction(forw_img, forw_keyLine, forw_descriptor);
+//        double t_lineextraction = t_r.toc();
+        lineMatching(curr_keyLine, forw_keyLine, curr_descriptor, forw_descriptor, good_match_vector);
+//        double t_linematching = t_r.toc() - t_lineextraction;
+        lineMergingTwoPhase( curr_img, forw_img, curr_keyLine, forw_keyLine, curr_descriptor, forw_descriptor, good_match_vector );
+//        double t_linemerging = t_r.toc() - t_linematching;
+
+        if(forw_keyLine.size() > 1)
+        {
+            getVPHypVia2Lines(forw_keyLine, para_vector, length_vector, orientation_vector, vpHypo);
+            getSphereGrids(forw_keyLine, para_vector, length_vector, orientation_vector, sphereGrid );
+            getBestVpsHyp(sphereGrid, vpHypo, tmp_vps);
+            lines2Vps(forw_keyLine, thAngle, tmp_vps, clusters, local_vp_ids);
+        }
+
+        tmp_track_cnt.clear();
+        tmp_ids.clear();
+        tmp_vp_ids.push_back(-1);
+        start_pts_velocity.clear();
+        end_pts_velocity.clear();
+        vps.clear();
+
+        if(forw_keyLine.size() > 0)
+        {
+            for(int i=0; i<forw_keyLine.size(); i++)
+            {
+                cv::Point2f start_pts = forw_keyLine[i].getStartPoint();
+                cv::Point2f end_pts = forw_keyLine[i].getEndPoint();
+                forw_start_pts.push_back( start_pts );
+                forw_end_pts.push_back(end_pts);
+
+//                if(line_vp_ids[i] == -1)
+//                    vps.push_back(Vector3d(0.0,0.0,0.0));
+//                else
+//                {
+//                    Vector3d vp = cluster_vps[line_vp_ids[i]];
+//                    Vector3d n_vp((vp(0) - pinhole_camera->getParameters().cx())/pinhole_camera->getParameters().fx(),
+//                                  (vp(1) - pinhole_camera->getParameters().cy())/pinhole_camera->getParameters().fy(),
+//                                  1.0);
+////                    if(isnan(n_vp(0)) || isnan(n_vp(1)))
+//                    vps.push_back(n_vp);
+//                }
+
+                if(!local_vp_ids.empty())
+                {
+                    if(local_vp_ids[i] == 3)
+                        vps.push_back(Vector3d(0.0,0.0,0.0));
+                    else
+                        vps.push_back(tmp_vps[local_vp_ids[i]]/tmp_vps[local_vp_ids[i]](2));
+                }
+
+//                Vector3d a = tmp_vps[local_vp_ids[i]]/tmp_vps[local_vp_ids[i]](2);
+//                cout << "-----" << endl;
+//                cout << vps[i](0) << " " << vps[i](1) << " " << vps[i](2) << " " << endl;
+//                cout << a(0) << " " << a(1) << " " << a(2) << endl;
+
+                //TODO initialize tmp_index
+                tmp_track_cnt.push_back(1);
+                tmp_ids.push_back(-1);
+                tmp_vp_ids.push_back(-1);
+                start_pts_velocity.push_back({0, 0});
+                end_pts_velocity.push_back({0, 0});
+            }
+        }
+        vector<int> local2id;
+
+        //bring ids & cnt of trackted lines and update tmp_index & tmp_cnt
+        unsigned int num_tracked_line = 0;
+        if(good_match_vector.size() > 0)
+        {
+            for(int i=0; i< good_match_vector.size(); i++)
+            {
+//                tmp_vp_ids.at(good_match_vector.at(i).trainIdx)=vp_ids.at(good_match_vector.at(i).queryIdx);
+                tmp_ids.at(good_match_vector.at(i).trainIdx)=ids.at(good_match_vector.at(i).queryIdx);
+                tmp_track_cnt.at(good_match_vector.at(i).trainIdx)=track_cnt.at(good_match_vector.at(i).queryIdx)+1;
+            }
+        }
+//        cout << "----" << endl;
+//        for(int i = 0; i < local2id.size(); i++)
+//            cout << i << " -> " << local2id[i] << endl;
+
+        ids.clear();
+        track_cnt.clear();
+        vp_ids.clear();
+
+        ids = tmp_ids;
+        track_cnt = tmp_track_cnt;
+//        vp_ids = local_vp_ids;
+
+//        cout << vp_ids.size() << ", " << forw_keyLine.size() << endl;
+
+//        imshow("1", tmp_img);
+//        waitKey(1);
+        curr_img = forw_img;
+        curr_img_color = forw_img_color;
+        curr_start_pts = forw_start_pts;
+        curr_end_pts = forw_end_pts;
+        curr_keyLine = forw_keyLine;
+        curr_descriptor = forw_descriptor.clone();
+    }
+    else
+    {
+        vector<Vector3d> para_vector;
+        vector<double> length_vector;
+        vector<double> orientation_vector;
+        vector<std::vector<Vector3d> > vpHypo;
+        vector<std::vector<double> > sphereGrid;
+        vector<Vector3d> tmp_vps;
+        vector<vector<int>> clusters;
+        vector<int> local_vp_ids;
+        double thAngle = 3.0 / 180.0 * CV_PI;
+
+        curr_img = forw_img.clone();
+        curr_img_color = forw_img_color.clone();
+        lineExtraction(curr_img, curr_keyLine, curr_descriptor);
+
+        if(curr_keyLine.size() > 1)
+        {
+            getVPHypVia2Lines(curr_keyLine, para_vector, length_vector, orientation_vector, vpHypo);
+            getSphereGrids(curr_keyLine, para_vector, length_vector, orientation_vector, sphereGrid );
+            getBestVpsHyp(sphereGrid, vpHypo, tmp_vps);
+            lines2Vps(curr_keyLine, thAngle, tmp_vps, clusters, local_vp_ids);
+        }
+//        drawClusters(img2, curr_keyLine, clusters);
+
+        curr_start_pts.clear();
+        curr_end_pts.clear();
+        tmp_track_cnt.clear();
+        tmp_ids.clear();
+        start_pts_velocity.clear();
+        end_pts_velocity.clear();
+        vps.clear();
+        vp_ids.clear();
+
+        for(int i=0; i< curr_keyLine.size(); i++)
+        {
+            cv::Point2f start_pts =  curr_keyLine[i].getStartPoint();
+            cv::Point2f end_pts = curr_keyLine[i].getEndPoint();
+            curr_start_pts.push_back(start_pts);
+            curr_end_pts.push_back(end_pts);
+
+            if(!local_vp_ids.empty())
+            {
+//                vps.push_back(Vector3d(0,0,0));
+////                vp_ids.push_back(local_vp_ids[i]);
+                if(local_vp_ids[i] == 3)
+                    vps.push_back(Vector3d(0.0,0.0,0.0));
+                else
+                    vps.push_back(tmp_vps[local_vp_ids[i]]/tmp_vps[local_vp_ids[i]](2));
+            }
+
+            //TODO initialize tmp_index
+            tmp_track_cnt.push_back(1);
+            tmp_ids.push_back(-1);
+            start_pts_velocity.push_back({0, 0});
+            end_pts_velocity.push_back({0, 0});
+        }
+
+        Mat tmp_img = curr_img.clone();
+        cvtColor(curr_img, tmp_img, CV_GRAY2BGR);
+        curr_img_color = forw_img_color;
+
+        ids.clear();
+        track_cnt.clear();
+        ids = tmp_ids;
+        track_cnt = tmp_track_cnt;
+    }
+
+//    float count = 0;
+//    for(int i = 0; i < track_cnt.size(); i++)
+//    {
+//        count += track_cnt[i];
+//    }
+
+    prev_start_un_pts = curr_start_un_pts;
+    prev_end_un_pts = curr_end_un_pts;
+
+    normalizePoints();
+    int frame_index = 0;
+//    cout << t_r.toc() << endl;
+}
+
+
+
+
 
 bool FindMatchedLine( LineKL query_line, LineKL train_line,
                       double min_diff_length, double min_diff_distance, double min_diff_angle ){
@@ -541,137 +572,86 @@ void LineFeatureTracker::lineMatching( vector<LineKL> &_prev_keyLine, vector<Lin
     bd_match->knnMatch(prev_descriptor, _curr_descriptor, matches_vector, 5);
     vector<DMatch> good_match_vector, bad_match_vector;
 
-//    for(int i = 0; i < matches_vector.size(); i++){
-//        double min_d = 1000;
-//        int min_idx = 0;
+    for(int i = 0; i < matches_vector.size(); i++){
+        double min_d = 1000;
+        int min_idx = 0;
 
-//        for ( int j = 0; j < matches_vector[i].size(); j++){
-//            if ( matches_vector[i][j].queryIdx == -1 || matches_vector[i][j].trainIdx == -1 )
-//                continue;
+        for ( int j = 0; j < matches_vector[i].size(); j++){
+            if ( matches_vector[i][j].queryIdx == -1 || matches_vector[i][j].trainIdx == -1 )
+                continue;
 
-//            if ( matches_vector[i][j].queryIdx > (_prev_keyLine.size()-1)
-//                || matches_vector[i][j].trainIdx > (_curr_keyLine.size()-1) )
-//                continue;
+            if ( matches_vector[i][j].queryIdx > (_prev_keyLine.size()-1)
+                || matches_vector[i][j].trainIdx > (_curr_keyLine.size()-1) )
+                continue;
 
-//            auto query_line = _prev_keyLine.at(matches_vector[i][j].queryIdx);
-//            auto train_line = _curr_keyLine.at(matches_vector[i][j].trainIdx);
+            auto query_line = _prev_keyLine.at(matches_vector[i][j].queryIdx);
+            auto train_line = _curr_keyLine.at(matches_vector[i][j].trainIdx);
 
-//            Point2f mid_p_query = (query_line.getStartPoint() + query_line.getEndPoint())/2.;
-//            Point2f mid_p_train = (train_line.getStartPoint() + train_line.getEndPoint())/2.;
+            Point2f mid_p_query = (query_line.getStartPoint() + query_line.getEndPoint())/2.;
+            Point2f mid_p_train = (train_line.getStartPoint() + train_line.getEndPoint())/2.;
 
-//            double dist = norm( Mat(mid_p_query), Mat(mid_p_train));
+            double dist = norm( Mat(mid_p_query), Mat(mid_p_train));
 
-//            if ( min_d > dist ){
-//                min_idx = j;
-//                min_d = dist;
-//            }
-//        }
+            if ( min_d > dist ){
+                min_idx = j;
+                min_d = dist;
+            }
+        }
 
-//        // if ( fabs(mean-matches_vector[i][min_idx].distance) < std_var)
-//        if ( min_d < 1000 )
-//            good_match_vector.push_back(matches_vector[i][min_idx]);
-//    }
-
-//    // remove duplicate points
-//    vector<DMatch>::iterator it_good_match_train = good_match_vector.begin();
-//    vector<DMatch>::iterator it_good_match_query;
-
-//    for ( ; it_good_match_train != good_match_vector.end()-1; ){
-//        if ( it_good_match_train == good_match_vector.end()) break;
-//        bool find_duplicate = false;
-
-//        for ( it_good_match_query = it_good_match_train+1; it_good_match_query != good_match_vector.end(); ){
-//            if ( (*it_good_match_query).trainIdx == (*it_good_match_train).trainIdx ){
-//                find_duplicate = true;
-
-//                if ( (*it_good_match_query).distance < (*it_good_match_train).distance )
-//                    good_match_vector.erase(it_good_match_train);
-//                else{
-//                    good_match_vector.erase(it_good_match_query);
-//                    it_good_match_train++;
-//                }
-
-//                break;
-//            }
-//            else
-//                it_good_match_query++;
-//        }
-
-//        if (!find_duplicate) it_good_match_train++;
-//    }
-
-//    // to visualize tracked line features
-//    vector<DMatch>::iterator it_good_match = good_match_vector.begin();
-//    m_matched_keyLines.clear();
-
-//    for ( ; it_good_match != good_match_vector.end(); ){
-//        if ( FindMatchedLine(_prev_keyLine.at(it_good_match->queryIdx),
-//                            _curr_keyLine.at(it_good_match->trainIdx), 20, 50, 0.2) ){
-//            m_matched_keyLines.push_back(_curr_keyLine.at(it_good_match->trainIdx));
-
-//            if ( m_matched_descriptor.rows == 0)
-//                m_matched_descriptor = _curr_descriptor.row(it_good_match->trainIdx);
-//            else
-//                vconcat(m_matched_descriptor, _curr_descriptor.row(it_good_match->trainIdx), m_matched_descriptor);
-
-//            it_good_match++;
-//        }
-//        else
-//            good_match_vector.erase(it_good_match);
-//    }
-
-//    _good_match_vector = good_match_vector;
-
-    std::vector<KeyLine> lbd_octave1, lbd_octave2;
-    Mat left_lbd, right_lbd;
-    for ( int i = 0; i < _prev_keyLine.size(); i++ )
-    {
-      if( _prev_keyLine[i].octave == 0 )
-      {
-        lbd_octave1.push_back( _prev_keyLine[i] );
-        left_lbd.push_back( _prev_descriptor.row( i ) );
-      }
+        // if ( fabs(mean-matches_vector[i][min_idx].distance) < std_var)
+        if ( min_d < 1000 )
+            good_match_vector.push_back(matches_vector[i][min_idx]);
     }
 
-    for ( int j = 0; j < _curr_keyLine.size(); j++ )
-    {
-      if( _curr_keyLine[j].octave == 0 )
-      {
-        lbd_octave2.push_back( _curr_keyLine[j] );
-        right_lbd.push_back( _curr_descriptor.row( j ) );
-      }
+    // remove duplicate points
+    vector<DMatch>::iterator it_good_match_train = good_match_vector.begin();
+    vector<DMatch>::iterator it_good_match_query;
+
+    for ( ; it_good_match_train != good_match_vector.end()-1; ){
+        if ( it_good_match_train == good_match_vector.end()) break;
+        bool find_duplicate = false;
+
+        for ( it_good_match_query = it_good_match_train+1; it_good_match_query != good_match_vector.end(); ){
+            if ( (*it_good_match_query).trainIdx == (*it_good_match_train).trainIdx ){
+                find_duplicate = true;
+
+                if ( (*it_good_match_query).distance < (*it_good_match_train).distance )
+                    good_match_vector.erase(it_good_match_train);
+                else{
+                    good_match_vector.erase(it_good_match_query);
+                    it_good_match_train++;
+                }
+
+                break;
+            }
+            else
+                it_good_match_query++;
+        }
+
+        if (!find_duplicate) it_good_match_train++;
     }
 
-    std::vector<DMatch> matches;
-    bd_match->match(_prev_descriptor, _curr_descriptor, matches);
-    std::vector<DMatch> good_matches;
+    // to visualize tracked line features
+    vector<DMatch>::iterator it_good_match = good_match_vector.begin();
+    m_matched_keyLines.clear();
 
+    for ( ; it_good_match != good_match_vector.end(); ){
+        if ( FindMatchedLine(_prev_keyLine.at(it_good_match->queryIdx),
+                            _curr_keyLine.at(it_good_match->trainIdx), 20, 50, 0.2) ){
+            m_matched_keyLines.push_back(_curr_keyLine.at(it_good_match->trainIdx));
 
-    for ( int i = 0; i < (int) matches.size(); i++ )
-    {
-        if(norm(Mat(_prev_keyLine[matches[i].queryIdx].getStartPoint()),
-                Mat(_curr_keyLine[matches[i].trainIdx].getStartPoint())) > 30 ||
-           norm(Mat(_prev_keyLine[matches[i].queryIdx].getEndPoint()),
-                Mat(_curr_keyLine[matches[i].trainIdx].getEndPoint())) > 30)
-            continue;
-        good_matches.push_back( matches[i] );
+            if ( m_matched_descriptor.rows == 0)
+                m_matched_descriptor = _curr_descriptor.row(it_good_match->trainIdx);
+            else
+                vconcat(m_matched_descriptor, _curr_descriptor.row(it_good_match->trainIdx), m_matched_descriptor);
+
+            it_good_match++;
+        }
+        else
+            good_match_vector.erase(it_good_match);
     }
-    _good_match_vector = good_matches;
 
-
-//    cout << _good_match_vector.size() << ", " << good_matches.size() << endl;
-
-
-//    cv::Mat outImg;
-//    cv::Mat scaled1, scaled2;
-//    std::vector<char> mask( matches.size(), 1 );
-//    Mat pre_img, cur_img;
-//    cvtColor(curr_img, pre_img, CV_GRAY2BGR);
-//    cvtColor(forw_img, cur_img, CV_GRAY2BGR);
-//    drawLineMatches( pre_img, lbd_octave1, cur_img, lbd_octave2, good_matches, outImg, Scalar::all( -1 ), Scalar::all( -1 ), mask,
-//                       DrawLinesMatchesFlags::DEFAULT );
-//    imshow( "Matches", outImg );
-//    waitKey(1);
+    _good_match_vector = good_match_vector;
 }
 
 LineKL MakeKeyLine( cv::Point2f start_pts, cv::Point2f end_pts, size_t cols ){
@@ -680,14 +660,6 @@ LineKL MakeKeyLine( cv::Point2f start_pts, cv::Point2f end_pts, size_t cols ){
     //    keyLine.numOfPixels;
 
     // Set start point(and octave)
-    if(start_pts.x > end_pts.x)
-    {
-        cv::Point2f tmp_pts;
-        tmp_pts = start_pts;
-        start_pts = end_pts;
-        end_pts = tmp_pts;
-    }
-
     keyLine.startPointX = (int)start_pts.x;
     keyLine.startPointY = (int)start_pts.y;
     keyLine.sPointInOctaveX = start_pts.x;
@@ -1001,7 +973,7 @@ void LineFeatureTracker::lineMergingTwoPhase( Mat &prev_img, Mat &cur_img, vecto
 
             double length = norm(Mat(start_predict_pts), Mat(end_predict_pts));
 
-            if (length > 10)
+            if (length > 50)
             {
                 // If the linew have the same class_id, it can't be matched.
                 // Therefore, when new line is inserted the vector, it should be changed the class_id.
@@ -1048,44 +1020,13 @@ void LineFeatureTracker::lineMergingTwoPhase( Mat &prev_img, Mat &cur_img, vecto
 
 void LineFeatureTracker::lineExtraction( Mat &cur_img, vector<LineKL> &keyLine, Mat &descriptor)
 {
-//    line_descriptor::BinaryDescriptor::EDLineDetector;
     keyLine.clear();
     Ptr<LineBD> lineBiDes = LineBD::createBinaryDescriptor();
     Ptr<line_descriptor::LSDDetector> lineLSD = line_descriptor::LSDDetector::createLSDDetector();
     Mat keyLine_mask = Mat::ones(forw_img.size(), CV_8UC1);
+
 //    lineLSD->detect(cur_img, keyLine, 2, 2, keyLine_mask);
-    TicToc t_r;
-//    lineBiDes->detect(cur_img, keyLine);
-//    double t1 = t_r.toc();
-    upm::Segments segs = elsed.detect(forw_img);
-//    cout<< t_r.toc() << endl;
-//    cout << t1 << " , " << t2 << endl;
-//    Mat tmp_img1, tmp_img2;
-//    cvtColor(forw_img, tmp_img1, CV_GRAY2BGR);
-//    cvtColor(forw_img, tmp_img2, CV_GRAY2BGR);
-//    for(int i = 0; i < forw_keyLine.size(); i++)
-//        line(tmp_img1, forw_keyLine[i].getStartPoint(), forw_keyLine[i].getEndPoint(), Scalar(0,255,0), 2);
-//    for(int i = 0; i < segs.size(); i++)
-//    {
-//        upm::Segment seg = segs[i];
-//        line(tmp_img2, cv::Point2f(seg[0], seg[1]), cv::Point2f(seg[2], seg[3]), Scalar(0,255,0), 2);
-//    }
-//    Mat compare;
-//    hconcat(tmp_img1, tmp_img2, compare);
-//    imshow("1", compare);
-//    waitKey(1);
-
-    int line_id = 0;
-    for(unsigned int i = 0; i < segs.size(); i++)
-    {
-        LineKL kl = MakeKeyLine(cv::Point2f(segs[i][0], segs[i][1]), cv::Point2f(segs[i][2], segs[i][3]), cur_img.cols);
-        if(kl.lineLength < 40)
-            continue;
-        kl.class_id = line_id;
-        line_id++;
-        keyLine.push_back(kl);
-
-    }
+    lineBiDes->detect(cur_img, keyLine);
     if(keyLine.size() > 0)
        lineBiDes->compute(cur_img, keyLine, descriptor);
 
@@ -1100,13 +1041,13 @@ void LineFeatureTracker::lineExtraction( Mat &cur_img, vector<LineKL> &keyLine, 
     int idx = 0;
 
 
-//    Mat img1 = cur_img.clone();
-//    Mat img2 = cur_img.clone();
+    Mat img1 = cur_img.clone();
+    Mat img2 = cur_img.clone();
 
-//    cvtColor(img1, img1, CV_GRAY2BGR);
-//    cvtColor(img2, img2, CV_GRAY2BGR);
-//    for(auto &it : keyLine)
-//        line(img1, it.getStartPoint(), it.getEndPoint(),Scalar(rand()%255,rand()%255,rand()%255), 2);
+    cvtColor(img1, img1, CV_GRAY2BGR);
+    cvtColor(img2, img2, CV_GRAY2BGR);
+    for(auto &it : keyLine)
+        line(img1, it.getStartPoint(), it.getEndPoint(),Scalar(rand()%255,rand()%255,rand()%255), 2);
 
 //    bool endflag = false;
 //    for(int i = 0; i < int(keyLine.size()); i++)
@@ -1192,51 +1133,57 @@ void LineFeatureTracker::lineExtraction( Mat &cur_img, vector<LineKL> &keyLine, 
 //    }
 
 
-//    for (;it_keyLine != keyLine.end();){
-//        double d = norm( Mat((*it_keyLine).getStartPoint()), Mat((*it_keyLine).getEndPoint()) );
-//        KeyLine& kl = *it_keyLine;
+    for (;it_keyLine != keyLine.end();){
+        double d = norm( Mat((*it_keyLine).getStartPoint()), Mat((*it_keyLine).getEndPoint()) );
+        KeyLine& kl = *it_keyLine;
 
-//        ///// NEED TO CHECK --> min? (KWANG YIK)
-//        float srt_x_at_max_y =  ((keyLine_mask.rows - 1) - kl.startPointY)*(kl.endPointX - kl.startPointX)/(kl.endPointY - kl.startPointY) + kl.startPointX;
-//        float end_x_at_max_y =  ((keyLine_mask.rows - 1) - kl.endPointY)*(kl.endPointX - kl.startPointX)/(kl.endPointY - kl.startPointY) + kl.endPointX;
-//        float srt_y_at_max_x =  ((keyLine_mask.cols - 1) - kl.startPointX)*(kl.endPointY - kl.startPointY)/(kl.endPointX - kl.startPointX) + kl.startPointY;
-//        float end_y_at_max_x =  ((keyLine_mask.cols - 1) - kl.endPointX)*(kl.endPointY - kl.startPointY)/(kl.endPointX - kl.startPointX) + kl.endPointY;
+        ///// NEED TO CHECK --> min? (KWANG YIK)
+        float srt_x_at_max_y =  ((keyLine_mask.rows - 1) - kl.startPointY)*(kl.endPointX - kl.startPointX)/(kl.endPointY - kl.startPointY) + kl.startPointX;
+        float end_x_at_max_y =  ((keyLine_mask.rows - 1) - kl.endPointY)*(kl.endPointX - kl.startPointX)/(kl.endPointY - kl.startPointY) + kl.endPointX;
+        float srt_y_at_max_x =  ((keyLine_mask.cols - 1) - kl.startPointX)*(kl.endPointY - kl.startPointY)/(kl.endPointX - kl.startPointX) + kl.startPointY;
+        float end_y_at_max_x =  ((keyLine_mask.cols - 1) - kl.endPointX)*(kl.endPointY - kl.startPointY)/(kl.endPointX - kl.startPointX) + kl.endPointY;
 
-//        if((int)kl.startPointX > keyLine_mask.cols - 1)
-//        {
-//            kl.startPointX = srt_x_at_max_y;
-//        }
-//        if((int)kl.startPointY > keyLine_mask.rows - 1)
-//        {
-//            kl.startPointY = srt_y_at_max_x;
-//        }
-//        if((int)kl.endPointX > keyLine_mask.cols - 1)
-//        {
-//            kl.endPointX = end_x_at_max_y;
-//        }
-//        if((int)kl.endPointY > keyLine_mask.rows - 1)
-//        {
-//            kl.endPointY = end_y_at_max_x;
-//        }
-//        //due to imprecise floating point scaling in the pyramid a little overflow can occur in line coordinates,
-//        //especially on big images. It will be fixed here
-//        //kl.startPointX = (float)std::min((int)kl.startPointX, keyLine_mask.cols - 1);
-//        //kl.startPointY = (float)std::min((int)kl.startPointY, keyLine_mask.rows - 1);
-//        //kl.endPointX = (float)std::min((int)kl.endPointX, keyLine_mask.cols - 1);
-//        //kl.endPointY = (float)std::min((int)kl.endPointY, keyLine_mask.rows - 1);
+        if((int)kl.startPointX > keyLine_mask.cols - 1)
+        {
+            kl.startPointX = srt_x_at_max_y;
+        }
+        if((int)kl.startPointY > keyLine_mask.rows - 1)
+        {
+            kl.startPointY = srt_y_at_max_x;
+        }
+        if((int)kl.endPointX > keyLine_mask.cols - 1)
+        {
+            kl.endPointX = end_x_at_max_y;
+        }
+        if((int)kl.endPointY > keyLine_mask.rows - 1)
+        {
+            kl.endPointY = end_y_at_max_x;
+        }
+        //due to imprecise floating point scaling in the pyramid a little overflow can occur in line coordinates,
+        //especially on big images. It will be fixed here
+        //kl.startPointX = (float)std::min((int)kl.startPointX, keyLine_mask.cols - 1);
+        //kl.startPointY = (float)std::min((int)kl.startPointY, keyLine_mask.rows - 1);
+        //kl.endPointX = (float)std::min((int)kl.endPointX, keyLine_mask.cols - 1);
+        //kl.endPointY = (float)std::min((int)kl.endPointY, keyLine_mask.rows - 1);
 
-//        if((keyLine_mask.at < uchar > ( (int) kl.startPointY, (int) kl.startPointX ) == 0 ||
-//             keyLine_mask.at < uchar > ( (int) kl.endPointY, (int) kl.endPointX ) == 0)
-//            || kl.lineLength < 50
-//                || kl.octave != 0){
-//            keyLine.erase(it_keyLine);
-//            util.DeleteCVMatRow(descriptor, idx);
-//        }
-//        else{
-//            it_keyLine++;
-//            idx++;
-//        }
-//    }
+        if((keyLine_mask.at < uchar > ( (int) kl.startPointY, (int) kl.startPointX ) == 0 ||
+             keyLine_mask.at < uchar > ( (int) kl.endPointY, (int) kl.endPointX ) == 0)
+            || kl.lineLength < 50 || kl.octave != 0){
+            keyLine.erase(it_keyLine);
+            util.DeleteCVMatRow(descriptor, idx);
+        }
+        else{
+            it_keyLine++;
+            idx++;
+        }
+    }
+
+    for(auto &it : keyLine)
+        line(img2, it.getStartPoint(), it.getEndPoint(),Scalar(0,0,255));
+    Mat img;
+//    hconcat(img1, img2, img);
+//    imshow("line merged", img1);
+//    waitKey(1);
 }
 
 void LineFeatureTracker::normalizePoints(){
@@ -2080,7 +2027,7 @@ void LineFeatureTracker::getVPHypVia2Lines(vector<KeyLine> cur_keyLine, vector<V
 {
     int num = cur_keyLine.size();
 
-    double noiseRatio = 0.5;
+    double noiseRatio;
     double p = 1.0 / 3.0 * pow( 1.0 - noiseRatio, 2 );
 
     double confEfficience = 0.9999;

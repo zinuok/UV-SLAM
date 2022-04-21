@@ -5,6 +5,7 @@
 #include <queue>
 #include <execinfo.h>
 #include <csignal>
+#include <string>
 
 #include <opencv2/opencv.hpp>
 #include <eigen3/Eigen/Dense>
@@ -20,6 +21,7 @@
 using namespace std;
 using namespace camodocal;
 using namespace Eigen;
+using namespace cv;
 
 class FeatureTracker
 {

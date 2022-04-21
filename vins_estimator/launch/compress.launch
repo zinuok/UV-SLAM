@@ -1,0 +1,10 @@
+
+  
+<launch>   
+	<!-- Uncompress images -->   
+	<node pkg="image_transport" type="republish" name="decompress_node1" args="compressed in:=/depth_to_rgb/image_raw out:=/depth_to_rgb/image_raw/out" />
+	<node pkg="image_transport" type="republish" name="decompress_node2" args="compressed in:=/rgb/image_raw out:=/rgb/image_raw/out" />
+	
+
+
+</launch>

@@ -28,11 +28,6 @@ include_directories(
   ${EIGEN3_INCLUDE_DIR}
 )
 
-set(ELSED_PATH ${PROJECT_SOURCE_DIR}/../ELSED)
-find_library(ELSED_LIB elsed ${ELSED_PATH}/build)
-include_directories(${ELSED_PATH}/src)
-message(WARNING "${ELSED_PATH}")
-
 add_executable(feature_tracker
     src/feature_tracker_node.cpp
     src/parameters.cpp
@@ -41,5 +36,5 @@ add_executable(feature_tracker
     src/utility.cpp
     )
 
-target_link_libraries(feature_tracker ${catkin_LIBRARIES} ${OpenCV_LIBS} ${ELSED_LIB})
+target_link_libraries(feature_tracker ${catkin_LIBRARIES} ${OpenCV_LIBS})
 
