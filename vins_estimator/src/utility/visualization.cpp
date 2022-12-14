@@ -28,6 +28,11 @@ ros::Publisher pub_line_deg;
 ros::Publisher pub_line_array;
 ros::Publisher pub_text;
 
+ros::Publisher pub_rgb_img;
+ros::Publisher pub_sdepth;
+ros::Publisher pub_cdt_pts;
+ros::Publisher pub_cpose;
+
 CameraPoseVisualization cameraposevisual(0, 1, 0, 1);
 CameraPoseVisualization keyframebasevisual(0.0, 0.0, 1.0, 1.0);
 static double sum_of_path = 0;
@@ -81,6 +86,15 @@ void registerPub(ros::NodeHandle &n)
     pub_line_deg = n.advertise<visualization_msgs::Marker>("degenerated_line", 1000);
     pub_line_array = n.advertise<visualization_msgs::MarkerArray>("line_history_clouds", 1000);
     pub_text = n.advertise<visualization_msgs::MarkerArray>("line_text",1000);
+
+
+
+    pub_rgb_img = n.advertise<sensor_msgs::Image>("dc_rgb_img", 1000);
+    pub_sdepth  = n.advertise<sensor_msgs::Image>("dc_sdepth", 1000);
+    pub_cdt_pts = n.advertise<cdt_msgs::StampedArray>("dc_cdt_pts", 1000);
+    pub_cpose   = n.advertise<cdt_msgs::StampedArray>("dc_camera_pose", 1000);
+
+
     declarePublisher(num, n, pub_margin_line_list);
 
     cameraposevisual.setScale(1);
@@ -88,6 +102,80 @@ void registerPub(ros::NodeHandle &n)
     keyframebasevisual.setScale(0.1);
     keyframebasevisual.setLineWidth(0.01);
 }
+
+
+
+
+/* pub data for depth completion pipeline */
+void pubDepthCompletion(Estimator &estimator, const std_msgs::Header &header)
+{
+    // get data
+    if(!estimator.rgb_img_pub.empty() && !estimator.sdepth_pub.empty() && !estimator.ctd_pts_pub.empty() && !estimator.cpose_pub.empty() )
+    {
+        pair<double,cv::Mat> img_    = estimator.rgb_img_pub.front();
+        pair<double,cv::Mat> sdepth_ = estimator.sdepth_pub.front();
+        pair<double,vector<Vector2d>> cdt_pts_ = estimator.ctd_pts_pub.front();
+        pair<double,Matrix4d> cpose_ = estimator.cpose_pub.front();
+
+        estimator.rgb_img_pub.pop();
+        estimator.sdepth_pub.pop();
+        estimator.ctd_pts_pub.pop();
+        estimator.cpose_pub.pop();
+
+        assert(img_.first == sdepth_.first);
+        assert(img_.first == cdt_pts_.first);
+        assert(img_.first == cpose_.first);
+
+        double header_t = img_.first;
+
+        cout << "[" << header_t << "]" << "has been published" << endl;
+
+
+        // 1) pub rgb image
+        sensor_msgs::ImagePtr img_msg = cv_bridge::CvImage(header, "bgr8", img_.second).toImageMsg();
+        pub_rgb_img.publish(img_msg);
+
+        // 2) pub sparse depth
+        sensor_msgs::ImagePtr sdepth_msg = cv_bridge::CvImage(header, "mono16", sdepth_.second).toImageMsg();
+        pub_sdepth.publish(sdepth_msg);
+
+        // 3) pub cdt points
+        cdt_msgs::StampedArray cdt_pts;
+        cdt_pts.header = header;
+        cdt_pts.array.data.clear();
+
+        for (auto it : cdt_pts_.second)
+        {
+            cdt_pts.array.data.push_back(it.x());
+            cdt_pts.array.data.push_back(it.y());
+        }
+        pub_cdt_pts.publish(cdt_pts);
+
+        // 4) pub camera pose
+        cdt_msgs::StampedArray cpose;
+        cpose.header = header;
+        cpose.array.data.clear();
+        for (int i=0; i<4; i++)
+        {
+            for (int j=0; j<4; j++)
+            {
+                cpose.array.data.push_back(cpose_.second(i,j));
+            }
+        }
+        pub_cpose.publish(cpose);
+
+
+
+    }
+
+
+    return;
+
+}
+
+
+
+
 
 void pubLatestOdometry(const Eigen::Vector3d &P, const Eigen::Quaterniond &Q, const Eigen::Vector3d &V, const std_msgs::Header &header)
 {
@@ -427,9 +515,9 @@ void pubLineCloud(const Estimator &estimator, std_msgs::Header &header)
             // 3D line in both directions w.r.t. homog. camera normal coord.
             Vector4d pi_s_4d, pi_e_4d;
             pi_s_4d.head(3) = pi_s;
-            pi_s_4d(3) = 1;
+            pi_s_4d(3) = 0;
             pi_e_4d.head(3) = pi_e;
-            pi_e_4d(3) = 1;
+            pi_e_4d(3) = 0;
 
             // orientation of line w.r.t. world: (R, pi)
             AngleAxisd roll(it_per_id.orthonormal_vec(0), Vector3d::UnitX());

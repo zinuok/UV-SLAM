@@ -247,7 +247,8 @@ void Estimator::processImage(const map<int, vector<pair<int, Eigen::Matrix<doubl
 void Estimator::processImage(const map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> &image,
                              const map<int, vector<Eigen::Matrix<double, 15, 1>>> &image_line,
                              const std_msgs::Header &header,
-                             const Mat latest_image)
+                             const Mat latest_image,
+                             const geometry_msgs::TransformStamped latestGT_msg)
 {
     latest_img = latest_image.clone();
     ROS_DEBUG("new image coming ------------------------------------------");
@@ -265,7 +266,20 @@ void Estimator::processImage(const map<int, vector<pair<int, Eigen::Matrix<doubl
     ROS_DEBUG("%s", marginalization_flag ? "Non-keyframe" : "Keyframe");
     ROS_DEBUG("Solving %d", frame_count);
     ROS_DEBUG("number of feature: %d", f_manager.getFeatureCount());
+
+
+    // 할당
     Headers[frame_count] = header;
+
+    q_gt = Quaterniond(latestGT_msg.transform.rotation.w,
+                       latestGT_msg.transform.rotation.x,
+                       latestGT_msg.transform.rotation.y,
+                       latestGT_msg.transform.rotation.z);
+    t_gt = Vector3d(latestGT_msg.transform.translation.x,
+                    latestGT_msg.transform.translation.y,
+                    latestGT_msg.transform.translation.z);
+
+//    cout << "gt t: " << t_gt.transpose() << endl;
 
     ImageFrame imageframe(image, image_line, header.stamp.toSec());
     imageframe.pre_integration = tmp_pre_integration;
@@ -673,11 +687,11 @@ void Estimator::solveOdometry(double header_t)
         Mat img = latest_img.clone();
         Mat depth = latest_depth.clone();
         Mat depth_vis = latest_depth.clone();
-        Mat features = Mat::zeros(depth.size(), CV_16UC1);
-        Mat validity = Mat::zeros(depth.size(), CV_8UC1);
+        Mat features = Mat::zeros(img.size(), CV_16UC1);
+        Mat validity = Mat::zeros(img.size(), CV_8UC1);
 
-        Mat features_point = Mat::zeros(depth.size(), CV_16UC1);
-        Mat validity_point = Mat::zeros(depth.size(), CV_8UC1);
+        Mat features_point = Mat::zeros(img.size(), CV_16UC1);
+        Mat validity_point = Mat::zeros(img.size(), CV_8UC1);
 
         // int inttype = latest_depth.type();
         // string r;
@@ -755,9 +769,9 @@ void Estimator::solveOdometry(double header_t)
 
                     Vector4d pi_s_4d, pi_e_4d;
                     pi_s_4d.head(3) = pi_s;
-                    pi_s_4d(3) = 1;
+                    pi_s_4d(3) = 0;
                     pi_e_4d.head(3) = pi_e;
-                    pi_e_4d(3) = 1;
+                    pi_e_4d(3) = 0;
 
                     AngleAxisd roll(it_per_id.orthonormal_vec(0), Vector3d::UnitX());
                     AngleAxisd pitch(it_per_id.orthonormal_vec(1), Vector3d::UnitY());
@@ -876,31 +890,55 @@ void Estimator::solveOdometry(double header_t)
 
 
         /**************** save result ****************/
+//        imshow("1", validity);
+//        waitKey(1);
 
         // 1) mesh_uv
-        std::ofstream myfile;
-        myfile.open(MESH_RESULT_PATH+"/"+to_string(header_t)+".csv");
-
-        auto cdt_triangles = cdt.triangles;
-        for (unsigned int j = 0; j < cdt_triangles.size(); j++)
+        if (SAVE)
         {
-            auto v1 = cdt_triangles[j].vertices[0];
-            auto v2 = cdt_triangles[j].vertices[1];
-            auto v3 = cdt_triangles[j].vertices[2];
+            std::ofstream myfile;
+            myfile.open(MESH_RESULT_PATH+"/"+to_string(header_t)+".csv");
 
-            myfile << cdt_points[v1].x << "," << cdt_points[v1].y << endl;
-            myfile << cdt_points[v2].x << "," << cdt_points[v2].y << endl;
-            myfile << cdt_points[v3].x << "," << cdt_points[v3].y << endl;
+            auto cdt_triangles = cdt.triangles;
+            for (unsigned int j = 0; j < cdt_triangles.size(); j++)
+            {
+                auto v1 = cdt_triangles[j].vertices[0];
+                auto v2 = cdt_triangles[j].vertices[1];
+                auto v3 = cdt_triangles[j].vertices[2];
 
-//            line(img, Point(cdt_points[v1].x, cdt_points[v1].y), Point(cdt_points[v2].x, cdt_points[v2].y), Scalar(0, 255, 0), 1);
-//            line(img, Point(cdt_points[v2].x, cdt_points[v2].y), Point(cdt_points[v3].x, cdt_points[v3].y), Scalar(0, 255, 0), 1);
-//            line(img, Point(cdt_points[v3].x, cdt_points[v3].y), Point(cdt_points[v1].x, cdt_points[v1].y), Scalar(0, 255, 0), 1);
+                myfile << cdt_points[v1].x << "," << cdt_points[v1].y << endl;
+                myfile << cdt_points[v2].x << "," << cdt_points[v2].y << endl;
+                myfile << cdt_points[v3].x << "," << cdt_points[v3].y << endl;
 
+            }
+            myfile.close();
         }
-        myfile.close();
+        else
+        {
+            auto cdt_triangles = cdt.triangles;
+            vector<Vector2d> tmp;
+            for (unsigned int j = 0; j < cdt_triangles.size(); j++)
+            {
+                auto v1 = cdt_triangles[j].vertices[0];
+                auto v2 = cdt_triangles[j].vertices[1];
+                auto v3 = cdt_triangles[j].vertices[2];
 
-        imshow("1", img);
-        waitKey(1);
+                Vector2d v1_(cdt_points[v1].x, cdt_points[v1].y);
+                Vector2d v2_(cdt_points[v2].x, cdt_points[v2].y);
+                Vector2d v3_(cdt_points[v3].x, cdt_points[v3].y);
+
+                tmp.push_back(v1_);
+                tmp.push_back(v2_);
+                tmp.push_back(v3_);
+            }
+            ctd_pts_pub.push(make_pair(header_t,tmp));
+        }
+
+        cv::imshow("validity", validity);
+        cv::waitKey(1);
+
+
+
 
 
 
@@ -908,37 +946,39 @@ void Estimator::solveOdometry(double header_t)
          * Note: depth images are saved in [m] unit multiplied by DEPTH_SCALE (= 256.0)
          * (depth images in 16UC1 format is [mm] unit conventionally.)
          */
-        string from = "PLAD_v2";
-        string to   = "PLAD_point_v2";
-        string IMG_RESULT_PATH_POINT = IMG_RESULT_PATH;
-        string GT_RESULT_PATH_POINT = GT_RESULT_PATH;
-        string GT_VISUALZE_PATH_POINT = GT_VISUALZE_PATH;
-        string FEATURE_RESULT_PATH_POINT = FEATURE_RESULT_PATH;
-        string VALIDITY_RESULT_PATH_POINT = VALIDITY_RESULT_PATH;
+        if (SAVE)
+        {
+            string from = "PLAD_v2";
+            string to   = "PLAD_point_v2";
+            string IMG_RESULT_PATH_POINT = IMG_RESULT_PATH;
+            string GT_RESULT_PATH_POINT = GT_RESULT_PATH;
+            string GT_VISUALZE_PATH_POINT = GT_VISUALZE_PATH;
+            string FEATURE_RESULT_PATH_POINT = FEATURE_RESULT_PATH;
+            string VALIDITY_RESULT_PATH_POINT = VALIDITY_RESULT_PATH;
 
 
-
-        bool save = true;
-        if (save)
-        {   // 1) RGB image
+            // 1) RGB image
             imwrite(IMG_RESULT_PATH+"/"+to_string(header_t)+".png", img);
 //            IMG_RESULT_PATH_POINT.replace(IMG_RESULT_PATH_POINT.find(from), from.length(), to);
 //            imwrite(IMG_RESULT_PATH_POINT+"/"+to_string(header_t)+".png", img);
 
-            // 2-1) GT depth image
-            Mat depth_save = Mat::zeros(depth.size(), CV_16UC1);
-            depth_save = depth * DEPTH_SCALE / 1000;
-            imwrite(GT_RESULT_PATH+"/"+to_string(header_t)+".png", depth_save);
-//            GT_RESULT_PATH_POINT.replace(GT_RESULT_PATH_POINT.find(from), from.length(), to);
-//            imwrite(GT_RESULT_PATH_POINT+"/"+to_string(header_t)+".png", depth * DEPTH_SCALE / 1000);
+            if (ENABLE_DEPTH)
+            {
+              // 2-1) GT depth image
+              Mat depth_save = Mat::zeros(depth.size(), CV_16UC1);
+              depth_save = depth * DEPTH_SCALE / 1000;
+              imwrite(GT_RESULT_PATH+"/"+to_string(header_t)+".png", depth_save);
+  //            GT_RESULT_PATH_POINT.replace(GT_RESULT_PATH_POINT.find(from), from.length(), to);
+  //            imwrite(GT_RESULT_PATH_POINT+"/"+to_string(header_t)+".png", depth * DEPTH_SCALE / 1000);
 
 
-            // 2-2) GT depth visualize
-            Mat depth_vis_save = Mat::zeros(depth_vis.size(), CV_16UC1);
-            depth_vis_save = depth * DEPTH_SCALE;
-            imwrite(GT_VISUALZE_PATH+"/"+to_string(header_t)+".png", depth_vis_save); // store in [mm] unit just for visualization purpose
-//            GT_VISUALZE_PATH_POINT.replace(GT_VISUALZE_PATH_POINT.find(from), from.length(), to);
-//            imwrite(GT_VISUALZE_PATH_POINT+"/"+to_string(header_t)+".png", depth * DEPTH_SCALE);
+              // 2-2) GT depth visualize
+              Mat depth_vis_save = Mat::zeros(depth_vis.size(), CV_16UC1);
+              depth_vis_save = depth * DEPTH_SCALE;
+              imwrite(GT_VISUALZE_PATH+"/"+to_string(header_t)+".png", depth_vis_save); // store in [mm] unit just for visualization purpose
+  //            GT_VISUALZE_PATH_POINT.replace(GT_VISUALZE_PATH_POINT.find(from), from.length(), to);
+  //            imwrite(GT_VISUALZE_PATH_POINT+"/"+to_string(header_t)+".png", depth * DEPTH_SCALE);
+            }
 
             // 3) Feature depth image
             imwrite(FEATURE_RESULT_PATH+"/"+to_string(header_t)+".png", features);
@@ -951,9 +991,67 @@ void Estimator::solveOdometry(double header_t)
 //            imwrite(VALIDITY_RESULT_PATH_POINT+"/"+to_string(header_t)+".png", validity_point);
 
 
+            // 5) pose for EUROC gt depth generation
+            Quaterniond q_cb = Quaterniond(ric[0].transpose());
+            Vector3d t_cb = ric[0].transpose() * -tic[0];
+
+            Quaterniond q_bv = q_gt.inverse();
+            Vector3d t_bv = q_gt.inverse() * -t_gt;
+
+            Quaterniond q_cv = q_cb * q_bv;
+            Vector3d t_cv = q_cb * t_bv + t_cb;
+
+//            // Vicon room1
+//            Matrix3d R_tmp;
+//            R_tmp << 0.997, 0.046,-0.057,
+//                     -0.048, 0.999,-0.026,
+//                     0.055, 0.029, 0.998;
+//            Vector3d t_tmp(-0.033,  0.094, -0.091);
+
+//            q_cv = Quaterniond(R_tmp.transpose()) * q_cv;
+//            t_cv = Quaterniond(R_tmp.transpose()) * (t_cv - t_tmp);
+
+//            q_cv = Quaterniond(R_tmp) * q_cv;
+//            t_cv = R_tmp * t_cv + t_tmp;
+
+            Matrix4d T_cv;
+            T_cv.setZero();
+            T_cv.block<3,3>(0,0) = q_cv.toRotationMatrix();
+            T_cv.block<3,1>(0,3) = t_cv;
+            T_cv(3,3) = 1.0;
+
+            string pose_path = POSE_RESULT_PATH+"/"+to_string(header_t)+".txt";
+            ofstream pose(pose_path, ios::app);
+            pose.setf(ios::fixed, ios::floatfield);
+            pose << T_cv;
+            pose.close();
+
 
             cout << "[" << std::fixed << header_t << "] frame has been saved" << endl;
 
+        }
+        else
+        {
+            // 1) RGB image
+            rgb_img_pub.push(make_pair(header_t, img));
+
+            // 2) sparse depth
+            sdepth_pub.push(make_pair(header_t, features));
+
+            // 3) camera pose
+            int imu_cur = WINDOW_SIZE;
+            Matrix3d R_wc = Rs[imu_cur] * ric[0];
+            Vector3d t_wc = Rs[imu_cur] * tic[0] + Ps[imu_cur];
+
+            Matrix<double, 4, 4> T_wc;
+            T_wc.setZero();
+            T_wc.block<3,3>(0,0) = R_wc;
+            T_wc(0,3) = t_wc(0);
+            T_wc(1,3) = t_wc(1);
+            T_wc(2,3) = t_wc(2);
+            T_wc(3,3) = 1.0;
+
+            cpose_pub.push(make_pair(header_t, T_wc));
         }
     }
 }

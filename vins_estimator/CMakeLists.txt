@@ -13,6 +13,7 @@ find_package(catkin REQUIRED COMPONENTS
     nav_msgs
     tf
     cv_bridge
+    cdt_msgs
     )
 
 find_package(OpenCV REQUIRED)
@@ -24,6 +25,7 @@ find_package(OpenCV 3 REQUIRED )
 find_package(CDT REQUIRED CONFIG)
 
 include_directories(${catkin_INCLUDE_DIRS} ${CERES_INCLUDE_DIRS} ${OpenCV_INCLUDE_DIRS})
+
 
 set(CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake)
 find_package(Eigen3)

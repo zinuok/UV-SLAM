@@ -1,15 +1,26 @@
 %YAML:1.0
 
+output_path: "/home/hyunjun/rpg_traj/laptop/proposed"
+
+
 #common parameters
 imu_topic: "/imu0"
 image_topic: "/cam0/image_raw"
-output_path: "/home/hyunjun/rpg_traj/laptop/proposed"
+depth_topic: "/depth_to_rgb/image_raw/out"
 
-point_only: 0
-enable_depth: 0
 
-# save CDT results
+################### parameters Struct-MDC ###################
+use_euroc:    0  # use EuRoC dataset ?
+point_only:   0  # enable to save only point feature depth.
+enable_depth: 0  # does GT depth is exist?
+                 # (as `depth_topic` at 7-th line)
+
+# path to save the CDT results
+#seq_path: "/home/zinuok/Dataset/PLAD_v1/data/test"
+#seq_path: "/home/zinuok/Dataset/euroc/data/V2_03_difficult"
 seq_path: ""
+#############################################################
+
 
 #camera calibration
 model_type: PINHOLE
@@ -48,7 +59,7 @@ extrinsicTranslation: !!opencv-matrix
    data: [-0.0216401454975,-0.064676986768, 0.00981073058949]
 
 #feature traker paprameters
-max_cnt: 150            # max feature number in feature tracking
+max_cnt: 300            # max feature number in feature tracking
 min_dist: 30            # min distance between two features
 freq: 10                # frequence (Hz) of publish tracking result. At least 10Hz for good estimation. If set 0, the frequence will be same as raw image
 F_threshold: 1.0        # ransac threshold (pixel)

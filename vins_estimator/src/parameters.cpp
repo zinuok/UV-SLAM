@@ -1,7 +1,9 @@
 #include "parameters.h"
 
+int USE_EUROC;
 int POINT_ONLY;
 int ENABLE_DEPTH;
+int SAVE;
 
 double INIT_DEPTH;
 double MIN_PARALLAX;
@@ -29,6 +31,7 @@ int ROLLING_SHUTTER;
 std::string IMG_RESULT_PATH;
 std::string GT_RESULT_PATH;
 std::string GT_VISUALZE_PATH;
+std::string GT_POSE_PATH;
 std::string VALIDITY_RESULT_PATH;
 std::string POSE_RESULT_PATH;
 std::string FEATURE_RESULT_PATH;
@@ -86,8 +89,10 @@ void readParameters(ros::NodeHandle &n)
     MIN_PARALLAX = MIN_PARALLAX / FOCAL_LENGTH;
 
 
-    POINT_ONLY = fsSettings["point_only"];
+    USE_EUROC    = fsSettings["use_euroc"];
+    POINT_ONLY   = fsSettings["point_only"];
     ENABLE_DEPTH = fsSettings["enable_depth"];
+    SAVE         = fsSettings["save"];
 
 
 
@@ -98,6 +103,7 @@ void readParameters(ros::NodeHandle &n)
     IMG_RESULT_PATH = SEQ_PATH + "/image";
     GT_RESULT_PATH = SEQ_PATH + "/ground_truth";
     GT_VISUALZE_PATH = SEQ_PATH + "/visualize";
+    GT_POSE_PATH = SEQ_PATH + "/pose.txt";
     FEATURE_RESULT_PATH = SEQ_PATH + "/sparse_depth";
     POSE_RESULT_PATH = SEQ_PATH + "/pose";
     VALIDITY_RESULT_PATH = SEQ_PATH + "/validity_map";

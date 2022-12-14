@@ -8,8 +8,10 @@
 #include <opencv2/core/eigen.hpp>
 #include <fstream>
 
+extern int USE_EUROC;
 extern int POINT_ONLY;
 extern int ENABLE_DEPTH;
+extern int SAVE;
 
 extern double FOCAL_LENGTH;
 extern double PROJ_FX;
@@ -39,6 +41,7 @@ extern Eigen::Vector3d G;
 extern std::string IMG_RESULT_PATH;
 extern std::string GT_RESULT_PATH;
 extern std::string GT_VISUALZE_PATH;
+extern std::string GT_POSE_PATH;
 extern std::string VALIDITY_RESULT_PATH;
 extern std::string POSE_RESULT_PATH;
 extern std::string FEATURE_RESULT_PATH;

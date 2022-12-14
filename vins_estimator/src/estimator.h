@@ -11,6 +11,7 @@
 #include <std_msgs/Header.h>
 #include <std_msgs/Float32.h>
 #include <sensor_msgs/Image.h>
+#include <geometry_msgs/TransformStamped.h>
 
 #include <ceres/ceres.h>
 #include "factor/imu_factor.h"
@@ -25,7 +26,11 @@
 #include <queue>
 #include <opencv2/core/eigen.hpp>
 #include <Eigen/Dense>
+
+
 #include "CDT.h"
+
+
 
 class Estimator
 {
@@ -45,7 +50,8 @@ class Estimator
     void processImage(const map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> &image,
                       const map<int, vector<Eigen::Matrix<double, 15, 1>>> &image_line,
                       const std_msgs::Header &header,
-                      const Mat latest_image);
+                      const Mat latest_image,
+                      const geometry_msgs::TransformStamped latestGT_msg);
     void setReloFrame(double _frame_stamp, int _frame_index, vector<Vector3d> &_match_points, Vector3d _relo_t, Matrix3d _relo_r);
 
     // internal
@@ -93,6 +99,9 @@ class Estimator
     Vector3d Bas[(WINDOW_SIZE + 1)];
     Vector3d Bgs[(WINDOW_SIZE + 1)];
     double td;
+
+    Quaterniond q_gt;
+    Vector3d t_gt;
 
     Matrix3d back_R0, last_R, last_R0;
     Vector3d back_P0, last_P, last_P0;
@@ -161,4 +170,9 @@ class Estimator
 
     cv::Mat latest_img;
     cv::Mat latest_depth;
+
+    queue<pair<double,vector<Vector2d>>> ctd_pts_pub;
+    queue<pair<double,cv::Mat>> rgb_img_pub;
+    queue<pair<double,cv::Mat>> sdepth_pub;
+    queue<pair<double,Matrix4d>> cpose_pub;
 };

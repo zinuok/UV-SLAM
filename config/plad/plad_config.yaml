@@ -8,13 +8,14 @@ depth_topic: "/depth_to_rgb/image_raw/out"
 
 
 ################### parameters Struct-MDC ###################
-point_only: 0    # enable to save only point feature depth.
+use_euroc:    0  # use EuRoC dataset ?
+point_only:   0  # enable to save only point feature depth.
 enable_depth: 1  # does GT depth is exist?
                  # (as `depth_topic` at 7-th line)
+save:         1  # save result?
 
 # path to save the CDT results
-#seq_path: "/home/zinuok/Dataset/PLAD_v1/data/test"
-seq_path: "/home/zinuok/test"
+seq_path: "/home/zinuok/Dataset/PLAD_v4/data/test_p_short_7"
 #############################################################
 
 #camera calibration
@@ -55,8 +56,8 @@ extrinsicTranslation: !!opencv-matrix
    data: [0.00400477, -0.03628361, -0.01954223]
 
 #feature traker paprameters
-max_cnt: 150            # max feature number in feature tracking
-min_dist: 20            # min distance between two features
+max_cnt: 300            # max feature number in feature tracking
+min_dist: 15            # min distance between two features
 freq: 10                # frequence (Hz) of publish tracking result. At least 10Hz for good estimation. If set 0, the frequence will be same as raw image
 F_threshold: 1.0        # ransac threshold (pixel)
 show_track: 1           # publish tracking image as topic

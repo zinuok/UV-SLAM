@@ -17,7 +17,10 @@
 #include <eigen3/Eigen/Dense>
 #include "../estimator.h"
 #include "../parameters.h"
+#include <cv_bridge/cv_bridge.h>
 #include <fstream>
+
+#include <cdt_msgs/StampedArray.h>
 
 extern ros::Publisher pub_odometry;
 extern ros::Publisher pub_path, pub_pose;
@@ -31,6 +34,8 @@ extern ros::Publisher pub_text;
 extern int IMAGE_ROW, IMAGE_COL;
 
 void registerPub(ros::NodeHandle &n);
+
+void pubDepthCompletion(Estimator &estimator, const std_msgs::Header &header);
 
 void pubLatestOdometry(const Eigen::Vector3d &P, const Eigen::Quaterniond &Q, const Eigen::Vector3d &V, const std_msgs::Header &header);
 
